@@ -2,35 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Login Test</title>
+  <title>Collaborative Workspace</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <h2>Register</h2>
-  <input id="username" placeholder="Username">
-  <input id="password" type="password" placeholder="Password">
-  <br><br>
-  <button onclick="register()">Register</button>
+<div class="background"></div>
 
-  <p id="result"></p>
+<div class="auth-card">
+  <div class="logo">
+    <h1>CoLab</h1>
+    <p>Real-Time Collaborative Workspace</p>
+  </div>
 
-  <script>
-    async function register() {
-      const username = document.getElementById("username").value;
-      const password = document.getElementById("password").value;
+  <div class="tabs">
+    <button id="loginTab" class="active">Login</button>
+    <button id="registerTab">Register</button>
+  </div>
 
-      const res = await fetch("http://localhost:3000/api/register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ username, password })
-      });
+  <div class="form">
 
-      const data = await res.json();
-      document.getElementById("result").innerText = data.message;
-    }
-  </script>
+  <!-- LOGIN FORM -->
+  <div id="loginForm">
+    <input type="text" placeholder="Username" id="loginUsername">
+    <input type="password" placeholder="Password" id="loginPassword">
+    <button class="primary-btn">Login</button>
+  </div>
 
+  <!-- REGISTER FORM -->
+  <div id="registerForm" class="hidden">
+    <input type="email" placeholder="Email Address" id="registerEmail">
+    <input type="text" placeholder="First Name" id="registerFirstName">
+    <input type="text" placeholder="Last Name" id="registerLastName">
+    <input type="password" placeholder="Create Password" id="registerPassword">
+    <button class="primary-btn">Create Account</button>
+  </div>
+
+</div>
+
+  <div class="footer-text">
+    <p>Secure • Real-Time • Team-Based</p>
+  </div>
+</div>
+
+<script src="script.js"></script>
 </body>
 </html>
