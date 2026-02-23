@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import client from '../api/client';
 import { toast } from 'sonner';
 import io from 'socket.io-client';
 import { 
@@ -10,7 +10,6 @@ import {
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -18,7 +17,6 @@ import CollaborativeEditor from '../components/CollaborativeEditor';
 import VoiceChat from '../components/VoiceChat';
 import Whiteboard from '../components/Whiteboard';
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const SOCKET_PATH = "/api/socket.io";
 
@@ -64,29 +62,31 @@ const WorkspacePage = () => {
 
   const loadInitialData = async () => {
     try {
-      const [userRes, workspaceRes, docsRes, messagesRes, tasksRes, filesRes, membersRes] = await Promise.all([
-        axios.get(`${API}/auth/me`, { withCredentials: true }),
-        axios.get(`${API}/workspaces/${workspaceId}`, { withCredentials: true }),
-        axios.get(`${API}/documents?workspace_id=${workspaceId}`, { withCredentials: true }),
-        axios.get(`${API}/messages?workspace_id=${workspaceId}`, { withCredentials: true }),
-        axios.get(`${API}/tasks?workspace_id=${workspaceId}`, { withCredentials: true }),
-        axios.get(`${API}/files?workspace_id=${workspaceId}`, { withCredentials: true }),
-        axios.get(`${API}/workspaces/${workspaceId}/members`, { withCredentials: true })
+      const [userRes, workspaceRes] = await Promise.all([
+        client.get('/me'),
+        client.get(`/workspaces/${workspaceId}`)
       ]);
 
       setCurrentUser(userRes.data);
       setWorkspace(workspaceRes.data);
-      setDocuments(docsRes.data);
-      setMessages(messagesRes.data);
-      setTasks(tasksRes.data);
-      setFiles(filesRes.data);
-      setMembers(membersRes.data);
 
-      if (docsRes.data.length > 0) {
-        setActiveDocument(docsRes.data[0]);
+      const [docsRes, messagesRes, tasksRes, filesRes, membersRes] = await Promise.allSettled([
+        client.get(`/documents?workspace_id=${workspaceId}`),
+        client.get(`/messages?workspace_id=${workspaceId}`),
+        client.get(`/tasks?workspace_id=${workspaceId}`),
+        client.get(`/files?workspace_id=${workspaceId}`),
+        client.get(`/workspaces/${workspaceId}/members`)
+      ]);
+
+      if (docsRes.status === 'fulfilled') {
+        setDocuments(docsRes.value.data);
+        if (docsRes.value.data.length > 0) setActiveDocument(docsRes.value.data[0]);
       }
+      if (messagesRes.status === 'fulfilled') setMessages(messagesRes.value.data);
+      if (tasksRes.status === 'fulfilled') setTasks(tasksRes.value.data);
+      if (filesRes.status === 'fulfilled') setFiles(filesRes.value.data);
+      if (membersRes.status === 'fulfilled') setMembers(membersRes.value.data);
 
-      // Initialize WebSocket
       initializeSocket();
       setLoading(false);
     } catch (error) {
@@ -148,10 +148,9 @@ const WorkspacePage = () => {
     }
 
     try {
-      const response = await axios.post(
-        `${API}/documents`,
-        { workspace_id: workspaceId, title: newDocTitle },
-        { withCredentials: true }
+      const response = await client.post(
+        '/documents',
+        { workspace_id: workspaceId, title: newDocTitle }
       );
 
       setDocuments([...documents, response.data]);
@@ -169,10 +168,9 @@ const WorkspacePage = () => {
     if (!messageInput.trim()) return;
 
     try {
-      await axios.post(
-        `${API}/messages`,
-        { workspace_id: workspaceId, content: messageInput },
-        { withCredentials: true }
+      await client.post(
+        '/messages',
+        { workspace_id: workspaceId, content: messageInput }
       );
       setMessageInput('');
     } catch (error) {
@@ -188,14 +186,13 @@ const WorkspacePage = () => {
     }
 
     try {
-      await axios.post(
-        `${API}/tasks`,
+      await client.post(
+        '/tasks',
         { 
           workspace_id: workspaceId, 
           title: newTaskTitle,
           description: newTaskDesc
-        },
-        { withCredentials: true }
+        }
       );
 
       setNewTaskTitle('');
@@ -210,10 +207,9 @@ const WorkspacePage = () => {
 
   const handleUpdateTaskStatus = async (taskId, newStatus) => {
     try {
-      await axios.put(
-        `${API}/tasks/${taskId}`,
-        { status: newStatus },
-        { withCredentials: true }
+      await client.put(
+        `/tasks/${taskId}`,
+        { status: newStatus }
       );
     } catch (error) {
       console.error('Failed to update task:', error);
@@ -231,13 +227,10 @@ const WorkspacePage = () => {
 
     setUploadingFile(true);
     try {
-      await axios.post(
-        `${API}/files/upload`,
+      await client.post(
+        '/files/upload',
         formData,
-        { 
-          withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' }
-        }
+        { headers: { 'Content-Type': 'multipart/form-data' } }
       );
       toast.success('File uploaded!');
     } catch (error) {
@@ -251,12 +244,9 @@ const WorkspacePage = () => {
 
   const handleDownloadFile = async (fileId, filename) => {
     try {
-      const response = await axios.get(
-        `${API}/files/${fileId}/download`,
-        { 
-          withCredentials: true,
-          responseType: 'blob'
-        }
+      const response = await client.get(
+        `/files/${fileId}/download`,
+        { responseType: 'blob' }
       );
 
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -280,16 +270,13 @@ const WorkspacePage = () => {
 
     setInviting(true);
     try {
-      const response = await axios.post(
-        `${API}/workspaces/${workspaceId}/invite`,
-        { email: inviteEmail },
-        { withCredentials: true }
+      const response = await client.post(
+        `/workspaces/${workspaceId}/invite`,
+        { email: inviteEmail }
       );
       
-      // Refresh members list
-      const membersRes = await axios.get(
-        `${API}/workspaces/${workspaceId}/members`,
-        { withCredentials: true }
+      const membersRes = await client.get(
+        `/workspaces/${workspaceId}/members`
       );
       setMembers(membersRes.data);
       
@@ -310,10 +297,7 @@ const WorkspacePage = () => {
     }
 
     try {
-      await axios.delete(
-        `${API}/documents/${docId}`,
-        { withCredentials: true }
-      );
+      await client.delete(`/documents/${docId}`);
       
       setDocuments(documents.filter(d => d.document_id !== docId));
       if (activeDocument?.document_id === docId) {
@@ -332,10 +316,7 @@ const WorkspacePage = () => {
     }
 
     try {
-      await axios.delete(
-        `${API}/tasks/${taskId}`,
-        { withCredentials: true }
-      );
+      await client.delete(`/tasks/${taskId}`);
       
       setTasks(tasks.filter(t => t.task_id !== taskId));
       toast.success('Task deleted');
@@ -467,216 +448,214 @@ const WorkspacePage = () => {
         </div>
 
         {/* Center - Editor/Chat/Tasks */}
-        <div className="flex-1 flex flex-col bg-white">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-            <TabsList className="w-full justify-start border-b border-[#E2E8F0] rounded-none bg-transparent p-0">
-              <TabsTrigger 
-                value="editor" 
-                data-testid="tab-editor"
-                className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-[#6366F1] rounded-none"
+        <div className="flex-1 flex flex-col bg-white min-h-0 overflow-hidden">
+          {/* Tab navigation */}
+          <div className="flex items-center border-b border-[#E2E8F0] flex-shrink-0">
+            {[
+              { id: 'editor', label: 'Editor', icon: FileText },
+              { id: 'whiteboard', label: 'Whiteboard', icon: CheckSquare },
+              { id: 'chat', label: 'Chat', icon: MessageSquare },
+              { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                data-testid={`tab-${tab.id}`}
+                onClick={() => setActiveTab(tab.id)}
+                className={`inline-flex items-center px-3 py-2 text-sm font-medium transition-all ${
+                  activeTab === tab.id
+                    ? 'text-[#0F172A] border-b-2 border-[#6366F1]'
+                    : 'text-[#64748B] hover:text-[#0F172A]'
+                }`}
               >
-                <FileText className="w-4 h-4 mr-2" />
-                Editor
-              </TabsTrigger>
-              <TabsTrigger 
-                value="whiteboard"
-                data-testid="tab-whiteboard"
-                className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-[#6366F1] rounded-none"
-              >
-                <CheckSquare className="w-4 h-4 mr-2" />
-                Whiteboard
-              </TabsTrigger>
-              <TabsTrigger 
-                value="chat"
-                data-testid="tab-chat"
-                className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-[#6366F1] rounded-none"
-              >
-                <MessageSquare className="w-4 h-4 mr-2" />
-                Chat
-              </TabsTrigger>
-              <TabsTrigger 
-                value="tasks"
-                data-testid="tab-tasks"
-                className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-[#6366F1] rounded-none"
-              >
-                <CheckSquare className="w-4 h-4 mr-2" />
-                Tasks
-              </TabsTrigger>
-            </TabsList>
+                <tab.icon className="w-4 h-4 mr-2" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-            <TabsContent value="editor" className="flex-1 overflow-hidden m-0 p-0">
-              {activeDocument ? (
-                <CollaborativeEditor 
-                  document={activeDocument} 
+          {/* Tab content — fills all remaining space */}
+          <div className="flex-1 relative min-h-0">
+            {/* Editor */}
+            {activeTab === 'editor' && (
+              <div className="absolute inset-0 overflow-hidden">
+                {activeDocument ? (
+                  <CollaborativeEditor 
+                    document={activeDocument} 
+                    workspaceId={workspaceId}
+                    socket={socketRef.current}
+                    currentUser={currentUser}
+                    members={members}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <FileText className="w-16 h-16 text-[#94A3B8] mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold text-[#0F172A] mb-2">
+                        No document selected
+                      </h3>
+                      <p className="text-[#64748B] mb-4">
+                        Create a new document or select one from the sidebar
+                      </p>
+                      <Button
+                        onClick={() => setShowNewDocDialog(true)}
+                        className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        New Document
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Whiteboard */}
+            {activeTab === 'whiteboard' && (
+              <div className="absolute inset-0">
+                <Whiteboard
                   workspaceId={workspaceId}
                   socket={socketRef.current}
                   currentUser={currentUser}
+                />
+              </div>
+            )}
+
+            {/* Chat */}
+            {activeTab === 'chat' && (
+              <div className="absolute inset-0 flex flex-col">
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {messages.map(msg => (
+                    <div 
+                      key={msg.message_id}
+                      data-testid={`message-${msg.message_id}`}
+                      className="flex gap-3 animate-fade-in"
+                    >
+                      <img
+                        src={msg.user_picture || 'https://via.placeholder.com/40'}
+                        alt={msg.user_name}
+                        className="w-10 h-10 rounded-full flex-shrink-0"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-baseline gap-2 mb-1">
+                          <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
+                          <span className="text-xs text-[#94A3B8] text-mono">
+                            {new Date(msg.created_at).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <p className="text-[#0F172A]">{msg.content}</p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+                
+                <VoiceChat 
+                  socket={socketRef.current}
+                  workspaceId={workspaceId}
+                  currentUser={currentUser}
                   members={members}
                 />
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-center">
-                    <FileText className="w-16 h-16 text-[#94A3B8] mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-[#0F172A] mb-2">
-                      No document selected
-                    </h3>
-                    <p className="text-[#64748B] mb-4">
-                      Create a new document or select one from the sidebar
-                    </p>
+                
+                <div className="border-t border-[#E2E8F0] p-4">
+                  <div className="flex gap-2">
+                    <Input
+                      value={messageInput}
+                      onChange={(e) => setMessageInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                      placeholder="Type a message..."
+                      data-testid="chat-input"
+                      className="flex-1"
+                    />
                     <Button
-                      onClick={() => setShowNewDocDialog(true)}
+                      onClick={handleSendMessage}
+                      data-testid="send-message-button"
                       className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
                     >
-                      <Plus className="w-4 h-4 mr-2" />
-                      New Document
+                      <Send className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="whiteboard" className="flex-1 overflow-hidden m-0 p-0">
-              <Whiteboard
-                workspaceId={workspaceId}
-                socket={socketRef.current}
-                currentUser={currentUser}
-              />
-            </TabsContent>
-
-            <TabsContent value="chat" className="flex-1 flex flex-col m-0 p-0">
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                {messages.map(msg => (
-                  <div 
-                    key={msg.message_id}
-                    data-testid={`message-${msg.message_id}`}
-                    className="flex gap-3 animate-fade-in"
-                  >
-                    <img
-                      src={msg.user_picture || 'https://via.placeholder.com/40'}
-                      alt={msg.user_name}
-                      className="w-10 h-10 rounded-full flex-shrink-0"
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-baseline gap-2 mb-1">
-                        <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
-                        <span className="text-xs text-[#94A3B8] text-mono">
-                          {new Date(msg.created_at).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <p className="text-[#0F172A]">{msg.content}</p>
-                    </div>
-                  </div>
-                ))}
-                <div ref={messagesEndRef} />
               </div>
-              
-              {/* Voice Chat Component */}
-              <VoiceChat 
-                socket={socketRef.current}
-                workspaceId={workspaceId}
-                currentUser={currentUser}
-                members={members}
-              />
-              
-              <div className="border-t border-[#E2E8F0] p-4">
-                <div className="flex gap-2">
-                  <Input
-                    value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    placeholder="Type a message..."
-                    data-testid="chat-input"
-                    className="flex-1"
-                  />
+            )}
+
+            {/* Tasks */}
+            {activeTab === 'tasks' && (
+              <div className="absolute inset-0 overflow-auto p-6">
+                <div className="mb-4">
                   <Button
-                    onClick={handleSendMessage}
-                    data-testid="send-message-button"
-                    className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
+                    onClick={() => setShowNewTaskDialog(true)}
+                    data-testid="new-task-button"
+                    className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-md transition-all active:scale-95"
                   >
-                    <Send className="w-4 h-4" />
+                    <Plus className="w-4 h-4 mr-2" />
+                    New Task
                   </Button>
                 </div>
-              </div>
-            </TabsContent>
 
-            <TabsContent value="tasks" className="flex-1 overflow-auto m-0 p-6">
-              <div className="mb-4">
-                <Button
-                  onClick={() => setShowNewTaskDialog(true)}
-                  data-testid="new-task-button"
-                  className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-md transition-all active:scale-95"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  New Task
-                </Button>
-              </div>
+                <div className="grid md:grid-cols-3 gap-6">
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Circle className="w-5 h-5 text-[#94A3B8]" />
+                      <h3 className="font-semibold text-[#0F172A]">To Do</h3>
+                      <span className="text-xs text-[#64748B] bg-[#F1F5F9] px-2 py-1 rounded-full">
+                        {todoTasks.length}
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {todoTasks.map(task => (
+                        <TaskCard 
+                          key={task.task_id} 
+                          task={task} 
+                          onStatusChange={handleUpdateTaskStatus}
+                          onDelete={handleDeleteTask}
+                        />
+                      ))}
+                    </div>
+                  </div>
 
-              <div className="grid md:grid-cols-3 gap-6">
-                {/* Todo Column */}
-                <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Circle className="w-5 h-5 text-[#94A3B8]" />
-                    <h3 className="font-semibold text-[#0F172A]">To Do</h3>
-                    <span className="text-xs text-[#64748B] bg-[#F1F5F9] px-2 py-1 rounded-full">
-                      {todoTasks.length}
-                    </span>
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Circle className="w-5 h-5 text-[#F59E0B] fill-[#F59E0B]" />
+                      <h3 className="font-semibold text-[#0F172A]">In Progress</h3>
+                      <span className="text-xs text-[#64748B] bg-[#FEF3C7] px-2 py-1 rounded-full">
+                        {inProgressTasks.length}
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {inProgressTasks.map(task => (
+                        <TaskCard 
+                          key={task.task_id} 
+                          task={task} 
+                          onStatusChange={handleUpdateTaskStatus}
+                          onDelete={handleDeleteTask}
+                        />
+                      ))}
+                    </div>
                   </div>
-                  <div className="space-y-3">
-                    {todoTasks.map(task => (
-                      <TaskCard 
-                        key={task.task_id} 
-                        task={task} 
-                        onStatusChange={handleUpdateTaskStatus}
-                        onDelete={handleDeleteTask}
-                      />
-                    ))}
-                  </div>
-                </div>
 
-                {/* In Progress Column */}
-                <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Circle className="w-5 h-5 text-[#F59E0B] fill-[#F59E0B]" />
-                    <h3 className="font-semibold text-[#0F172A]">In Progress</h3>
-                    <span className="text-xs text-[#64748B] bg-[#FEF3C7] px-2 py-1 rounded-full">
-                      {inProgressTasks.length}
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    {inProgressTasks.map(task => (
-                      <TaskCard 
-                        key={task.task_id} 
-                        task={task} 
-                        onStatusChange={handleUpdateTaskStatus}
-                        onDelete={handleDeleteTask}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Done Column */}
-                <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Check className="w-5 h-5 text-[#10B981]" />
-                    <h3 className="font-semibold text-[#0F172A]">Done</h3>
-                    <span className="text-xs text-[#64748B] bg-[#ECFDF5] px-2 py-1 rounded-full">
-                      {doneTasks.length}
-                    </span>
-                  </div>
-                  <div className="space-y-3">
-                    {doneTasks.map(task => (
-                      <TaskCard 
-                        key={task.task_id} 
-                        task={task} 
-                        onStatusChange={handleUpdateTaskStatus}
-                        onDelete={handleDeleteTask}
-                      />
-                    ))}
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Check className="w-5 h-5 text-[#10B981]" />
+                      <h3 className="font-semibold text-[#0F172A]">Done</h3>
+                      <span className="text-xs text-[#64748B] bg-[#ECFDF5] px-2 py-1 rounded-full">
+                        {doneTasks.length}
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {doneTasks.map(task => (
+                        <TaskCard 
+                          key={task.task_id} 
+                          task={task} 
+                          onStatusChange={handleUpdateTaskStatus}
+                          onDelete={handleDeleteTask}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         </div>
 
         {/* Right Sidebar - Files */}

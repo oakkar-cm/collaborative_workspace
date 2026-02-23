@@ -60,15 +60,10 @@ const Dashboard = () => {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await apiLogout();
-      toast.success('Logged out successfully');
-      navigate('/');
-    } catch (error) {
-      console.error('Logout error:', error);
-      toast.error('Failed to logout');
-    }
+  const handleLogout = () => {
+    apiLogout();
+    toast.success('Logged out successfully');
+    navigate('/');
   };
 
   const handleDeleteWorkspace = async (workspaceId, workspaceName) => {
