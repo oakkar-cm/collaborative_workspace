@@ -1,41 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import axios from 'axios';
-
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+import { useNavigate } from 'react-router-dom';
+import { getToken, clearToken } from '../api/authStorage';
+import { getMe } from '../api/endpoints/auth';
 
 const ProtectedRoute = ({ children }) => {
   const navigate = useNavigate();
-  const location = useLocation();
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    location.state?.user ? true : null
-  );
-  const [user, setUser] = useState(location.state?.user || null);
+  const [isAuthenticated, setIsAuthenticated] = useState(null);
 
   useEffect(() => {
-    // Skip auth check if user data was passed from AuthCallback
-    if (location.state?.user) return;
+    const token = getToken();
+    if (!token) {
+      navigate('/login', { replace: true });
+      return;
+    }
 
     const checkAuth = async () => {
       try {
-        const response = await axios.get(`${API}/auth/me`, {
-          withCredentials: true
-        });
+        await getMe();
         setIsAuthenticated(true);
-        setUser(response.data);
       } catch (error) {
+        clearToken();
         setIsAuthenticated(false);
-        navigate('/', { replace: true });
+        navigate('/login', { replace: true });
       }
     };
 
     checkAuth();
-  }, [navigate, location.state]);
+  }, [navigate]);
 
   if (isAuthenticated === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#6366F1]"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#6366F1]" />
       </div>
     );
   }

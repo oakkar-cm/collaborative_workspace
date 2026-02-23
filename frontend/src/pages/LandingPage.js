@@ -1,17 +1,9 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ArrowRight, FileText, MessageSquare, CheckSquare, Users, Zap, Lock, Globe } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
 const LandingPage = () => {
-  const navigate = useNavigate();
-
-  const handleLogin = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + '/dashboard';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
-
   return (
     <div className="min-h-screen bg-[#F8F9FA]">
       {/* Hero Section */}
@@ -34,11 +26,11 @@ const LandingPage = () => {
               <span className="text-xl font-bold text-[#0F172A]">Synapse</span>
             </div>
             <Button
-              onClick={handleLogin}
+              asChild
               data-testid="nav-login-button"
               className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-full px-6 py-2 transition-all active:scale-95"
             >
-              Sign In
+              <Link to="/login">Sign In</Link>
             </Button>
           </div>
         </nav>
@@ -56,12 +48,11 @@ const LandingPage = () => {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Button
-                onClick={handleLogin}
+                asChild
                 data-testid="hero-get-started-button"
                 className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-full px-8 py-6 text-lg transition-all active:scale-95 flex items-center gap-2"
               >
-                Get Started Free
-                <ArrowRight className="w-5 h-5" />
+                <Link to="/login">Get Started Free <ArrowRight className="w-5 h-5" /></Link>
               </Button>
             </div>
           </div>
@@ -200,11 +191,11 @@ const LandingPage = () => {
             Join thousands of teams already collaborating better with Synapse.
           </p>
           <Button
-            onClick={handleLogin}
+            asChild
             data-testid="cta-get-started-button"
             className="bg-white text-[#6366F1] hover:bg-gray-50 rounded-full px-10 py-6 text-lg font-semibold transition-all active:scale-95"
           >
-            Start Collaborating Now
+            <Link to="/login">Start Collaborating Now</Link>
           </Button>
         </div>
       </div>

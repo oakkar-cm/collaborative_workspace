@@ -14,6 +14,15 @@ io.on("connection", (socket) => {
   logger.info("User connected:", socket.id);
 });
 
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    logger.error(`Port ${config.port} is already in use. Stop the other process or set PORT in .env`);
+  } else {
+    logger.error("Server error", err);
+  }
+  process.exit(1);
+});
+
 async function start() {
   await connect();
   server.listen(config.port, () => {
