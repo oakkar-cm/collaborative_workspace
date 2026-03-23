@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import client from '../api/client';
+import { getToken } from '../api/authStorage';
 import { toast } from 'sonner';
 import io from 'socket.io-client';
 import { 
@@ -97,7 +98,10 @@ const WorkspacePage = () => {
   };
 
   const initializeSocket = () => {
-    socketRef.current = io(BACKEND_URL, { path: SOCKET_PATH });
+    socketRef.current = io(BACKEND_URL || window.location.origin, {
+      path: SOCKET_PATH,
+      auth: { token: getToken() }
+    });
 
     socketRef.current.on('connect', () => {
       console.log('Connected to WebSocket');
@@ -285,7 +289,7 @@ const WorkspacePage = () => {
       toast.success(response.data.message);
     } catch (error) {
       console.error('Failed to invite user:', error);
-      toast.error(error.response?.data?.detail || 'Failed to invite user');
+      toast.error(error.response?.data?.message || 'Failed to invite user');
     } finally {
       setInviting(false);
     }
@@ -299,14 +303,15 @@ const WorkspacePage = () => {
     try {
       await client.delete(`/documents/${docId}`);
       
-      setDocuments(documents.filter(d => d.document_id !== docId));
+      const remaining = documents.filter(d => d.document_id !== docId);
+      setDocuments(remaining);
       if (activeDocument?.document_id === docId) {
-        setActiveDocument(documents.length > 1 ? documents[0] : null);
+        setActiveDocument(remaining.length > 0 ? remaining[0] : null);
       }
       toast.success('Document deleted');
     } catch (error) {
       console.error('Failed to delete document:', error);
-      toast.error(error.response?.data?.detail || 'Failed to delete document');
+      toast.error(error.response?.data?.message || 'Failed to delete document');
     }
   };
 
@@ -322,9 +327,18 @@ const WorkspacePage = () => {
       toast.success('Task deleted');
     } catch (error) {
       console.error('Failed to delete task:', error);
-      toast.error(error.response?.data?.detail || 'Failed to delete task');
+      toast.error(error.response?.data?.message || 'Failed to delete task');
     }
   };
+
+  const handleDocumentContentChange = useCallback((docId, content) => {
+    setDocuments(prev => prev.map(d =>
+      d.document_id === docId ? { ...d, content } : d
+    ));
+    setActiveDocument(prev =>
+      prev?.document_id === docId ? { ...prev, content } : prev
+    );
+  }, []);
 
   if (loading) {
     return (
@@ -476,111 +490,105 @@ const WorkspacePage = () => {
           {/* Tab content — fills all remaining space */}
           <div className="flex-1 relative min-h-0">
             {/* Editor */}
-            {activeTab === 'editor' && (
-              <div className="absolute inset-0 overflow-hidden">
-                {activeDocument ? (
-                  <CollaborativeEditor 
-                    document={activeDocument} 
-                    workspaceId={workspaceId}
-                    socket={socketRef.current}
-                    currentUser={currentUser}
-                    members={members}
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-full">
-                    <div className="text-center">
-                      <FileText className="w-16 h-16 text-[#94A3B8] mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold text-[#0F172A] mb-2">
-                        No document selected
-                      </h3>
-                      <p className="text-[#64748B] mb-4">
-                        Create a new document or select one from the sidebar
-                      </p>
-                      <Button
-                        onClick={() => setShowNewDocDialog(true)}
-                        className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        New Document
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Whiteboard */}
-            {activeTab === 'whiteboard' && (
-              <div className="absolute inset-0">
-                <Whiteboard
+            <div className="absolute inset-0 overflow-hidden" style={{ display: activeTab === 'editor' ? 'block' : 'none' }}>
+              {activeDocument ? (
+                <CollaborativeEditor 
+                  document={activeDocument} 
                   workspaceId={workspaceId}
                   socket={socketRef.current}
-                  currentUser={currentUser}
-                />
-              </div>
-            )}
-
-            {/* Chat */}
-            {activeTab === 'chat' && (
-              <div className="absolute inset-0 flex flex-col">
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {messages.map(msg => (
-                    <div 
-                      key={msg.message_id}
-                      data-testid={`message-${msg.message_id}`}
-                      className="flex gap-3 animate-fade-in"
-                    >
-                      <img
-                        src={msg.user_picture || 'https://via.placeholder.com/40'}
-                        alt={msg.user_name}
-                        className="w-10 h-10 rounded-full flex-shrink-0"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-baseline gap-2 mb-1">
-                          <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
-                          <span className="text-xs text-[#94A3B8] text-mono">
-                            {new Date(msg.created_at).toLocaleTimeString()}
-                          </span>
-                        </div>
-                        <p className="text-[#0F172A]">{msg.content}</p>
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
-                
-                <VoiceChat 
-                  socket={socketRef.current}
-                  workspaceId={workspaceId}
                   currentUser={currentUser}
                   members={members}
+                  onContentChange={handleDocumentContentChange}
                 />
-                
-                <div className="border-t border-[#E2E8F0] p-4">
-                  <div className="flex gap-2">
-                    <Input
-                      value={messageInput}
-                      onChange={(e) => setMessageInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder="Type a message..."
-                      data-testid="chat-input"
-                      className="flex-1"
-                    />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <FileText className="w-16 h-16 text-[#94A3B8] mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-[#0F172A] mb-2">
+                      No document selected
+                    </h3>
+                    <p className="text-[#64748B] mb-4">
+                      Create a new document or select one from the sidebar
+                    </p>
                     <Button
-                      onClick={handleSendMessage}
-                      data-testid="send-message-button"
+                      onClick={() => setShowNewDocDialog(true)}
                       className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
                     >
-                      <Send className="w-4 h-4" />
+                      <Plus className="w-4 h-4 mr-2" />
+                      New Document
                     </Button>
                   </div>
                 </div>
+              )}
+            </div>
+
+            {/* Whiteboard */}
+            <div className="absolute inset-0" style={{ display: activeTab === 'whiteboard' ? 'block' : 'none' }}>
+              <Whiteboard
+                workspaceId={workspaceId}
+                socket={socketRef.current}
+                currentUser={currentUser}
+              />
+            </div>
+
+            {/* Chat */}
+            <div className="absolute inset-0 flex flex-col" style={{ display: activeTab === 'chat' ? 'flex' : 'none' }}>
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {messages.map(msg => (
+                  <div 
+                    key={msg.message_id}
+                    data-testid={`message-${msg.message_id}`}
+                    className="flex gap-3 animate-fade-in"
+                  >
+                    <img
+                      src={msg.user_picture || 'https://via.placeholder.com/40'}
+                      alt={msg.user_name}
+                      className="w-10 h-10 rounded-full flex-shrink-0"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-baseline gap-2 mb-1">
+                        <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
+                        <span className="text-xs text-[#94A3B8] text-mono">
+                          {new Date(msg.created_at).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="text-[#0F172A]">{msg.content}</p>
+                    </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
               </div>
-            )}
+              
+              <VoiceChat 
+                socket={socketRef.current}
+                workspaceId={workspaceId}
+                currentUser={currentUser}
+                members={members}
+              />
+              
+              <div className="border-t border-[#E2E8F0] p-4">
+                <div className="flex gap-2">
+                  <Input
+                    value={messageInput}
+                    onChange={(e) => setMessageInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder="Type a message..."
+                    data-testid="chat-input"
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={handleSendMessage}
+                    data-testid="send-message-button"
+                    className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
 
             {/* Tasks */}
-            {activeTab === 'tasks' && (
-              <div className="absolute inset-0 overflow-auto p-6">
+            <div className="absolute inset-0 overflow-auto p-6" style={{ display: activeTab === 'tasks' ? 'block' : 'none' }}>
                 <div className="mb-4">
                   <Button
                     onClick={() => setShowNewTaskDialog(true)}
@@ -654,7 +662,6 @@ const WorkspacePage = () => {
                   </div>
                 </div>
               </div>
-            )}
           </div>
         </div>
 
@@ -692,7 +699,7 @@ const WorkspacePage = () => {
                         {file.filename}
                       </p>
                       <p className="text-xs text-[#94A3B8]">
-                        {(file.size / 1024).toFixed(1)} KB
+                        {file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'Unknown size'}
                       </p>
                       <p className="text-xs text-[#94A3B8] text-mono">
                         {new Date(file.uploaded_at).toLocaleDateString()}

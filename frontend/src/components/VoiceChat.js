@@ -420,10 +420,12 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
       closePeerConnection(userId);
     });
 
-    socket.emit('voice_leave', {
-      workspaceId,
-      userId: currentUser.user_id
-    });
+    if (socket?.connected) {
+      socket.emit('voice_leave', {
+        workspaceId,
+        userId: currentUser.user_id
+      });
+    }
 
     setIsInCall(false);
     setActiveParticipants([]);
@@ -437,11 +439,13 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
       audioTrack.enabled = !audioTrack.enabled;
       setIsMuted(!audioTrack.enabled);
       
-      socket.emit('voice_mute_status', {
-        workspaceId,
-        userId: currentUser.user_id,
-        isMuted: !audioTrack.enabled
-      });
+      if (socket?.connected) {
+        socket.emit('voice_mute_status', {
+          workspaceId,
+          userId: currentUser.user_id,
+          isMuted: !audioTrack.enabled
+        });
+      }
     }
   };
 
