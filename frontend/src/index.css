@@ -4,21 +4,6 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
-    height: 100%;
-    margin: 0;
-}
-
-body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-    font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, monospace;
-}
-
 @layer base {
     :root {
         --background: 248 249 250;
@@ -41,18 +26,38 @@ code {
         --input: 226 232 240;
         --ring: 99 102 241;
         --radius: 0.5rem;
-    }
-}
 
-@layer base {
+        --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        --font-heading: 'Manrope', sans-serif;
+        --font-mono: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, monospace;
+
+        --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+        --shadow-card-hover: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        --shadow-dialog: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    }
+
     * {
         @apply border-border;
     }
+
+    html, body, #root {
+        height: 100%;
+    }
+
     body {
+        margin: 0;
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
         @apply bg-[#F8F9FA] text-foreground;
     }
+
+    code {
+        font-family: var(--font-mono);
+    }
+
     h1, h2, h3, h4, h5, h6 {
-        font-family: 'Manrope', sans-serif;
+        font-family: var(--font-heading);
         font-weight: 600;
         letter-spacing: -0.02em;
     }
@@ -63,15 +68,15 @@ code {
         @apply bg-white/70 backdrop-blur-lg border border-white/20;
     }
     .text-mono {
-        font-family: 'JetBrains Mono', monospace;
+        font-family: var(--font-mono);
     }
     .shadow-card {
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+        box-shadow: var(--shadow-card);
     }
     .shadow-card-hover {
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        box-shadow: var(--shadow-card-hover);
     }
     .shadow-dialog {
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        box-shadow: var(--shadow-dialog);
     }
 }

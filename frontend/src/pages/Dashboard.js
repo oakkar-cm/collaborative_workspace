@@ -77,7 +77,7 @@ const Dashboard = () => {
       toast.success('Workspace deleted successfully');
     } catch (error) {
       console.error('Failed to delete workspace:', error);
-      toast.error(error.response?.data?.detail || 'Failed to delete workspace');
+      toast.error(error.response?.data?.message || 'Failed to delete workspace');
     }
   };
 

@@ -36,6 +36,7 @@ async function getMe(req, res, next) {
       return res.status(401).json({ message: "Unauthorized" });
     }
     res.json({
+      user_id: user._id,
       email: user.email,
       name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
     });
@@ -44,8 +45,22 @@ async function getMe(req, res, next) {
   }
 }
 
+async function exchangeSession(req, res, next) {
+  try {
+    const { session_id } = req.body;
+    if (!session_id) {
+      return res.status(400).json({ message: "session_id is required" });
+    }
+    const result = await authService.exchangeSession(session_id);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   register,
   login,
-  getMe
+  getMe,
+  exchangeSession
 };

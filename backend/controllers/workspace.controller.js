@@ -57,12 +57,33 @@ async function getMembers(req, res, next) {
   }
 }
 
+async function update(req, res, next) {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "name is required" });
+    }
+    const workspace = await workspaceService.updateWorkspace(
+      req.params.id,
+      req.user.userId,
+      { name: name.trim() }
+    );
+    res.json(workspace);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function invite(req, res, next) {
   try {
+    const { email } = req.body;
+    if (!email || !email.trim()) {
+      return res.status(400).json({ message: "email is required" });
+    }
     const result = await workspaceService.inviteMember(
       req.params.id,
       req.user.userId,
-      req.body.email
+      email
     );
     res.json(result);
   } catch (err) {
@@ -74,6 +95,7 @@ module.exports = {
   create,
   list,
   getById,
+  update,
   remove,
   getMembers,
   invite

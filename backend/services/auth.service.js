@@ -61,7 +61,52 @@ async function loginUser({ email, password }) {
   return { message: "Login successful", token };
 }
 
+const activeSessions = new Map();
+
+function createSession(userId) {
+  const crypto = require("crypto");
+  const sessionId = crypto.randomBytes(32).toString("hex");
+  activeSessions.set(sessionId, { userId, createdAt: Date.now() });
+
+  setTimeout(() => activeSessions.delete(sessionId), 5 * 60 * 1000);
+  return sessionId;
+}
+
+async function exchangeSession(sessionId) {
+  const session = activeSessions.get(sessionId);
+  if (!session) {
+    const err = new Error("Invalid or expired session");
+    err.statusCode = 401;
+    throw err;
+  }
+  activeSessions.delete(sessionId);
+
+  const user = await User.findById(session.userId).select("email firstName lastName").lean();
+  if (!user) {
+    const err = new Error("User not found");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const token = jwt.sign(
+    { userId: user._id, email: user.email },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiresIn }
+  );
+
+  return {
+    token,
+    user: {
+      user_id: user._id,
+      email: user.email,
+      name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
+    }
+  };
+}
+
 module.exports = {
   registerUser,
-  loginUser
+  loginUser,
+  createSession,
+  exchangeSession
 };

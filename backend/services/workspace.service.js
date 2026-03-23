@@ -29,6 +29,21 @@ async function getWorkspaceById(workspaceId, userId) {
   return workspace;
 }
 
+async function updateWorkspace(workspaceId, userId, updates) {
+  const workspace = await Workspace.findOne({
+    _id: workspaceId,
+    owner: userId
+  });
+  if (!workspace) {
+    const err = new Error("Workspace not found or not owner");
+    err.statusCode = 404;
+    throw err;
+  }
+  Object.assign(workspace, updates);
+  await workspace.save();
+  return workspace;
+}
+
 async function deleteWorkspace(workspaceId, userId) {
   const workspace = await Workspace.findOne({
     _id: workspaceId,
@@ -93,6 +108,7 @@ module.exports = {
   createWorkspace,
   getWorkspacesByUser,
   getWorkspaceById,
+  updateWorkspace,
   deleteWorkspace,
   getMembers,
   inviteMember

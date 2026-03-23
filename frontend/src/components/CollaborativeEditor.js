@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
-import axios from 'axios';
+import client from '../api/client';
 import { toast } from 'sonner';
 import { 
   Bold, Italic, Strikethrough, Code, List, ListOrdered, 
@@ -12,15 +12,97 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-
-const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, members }) => {
+const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, members, onContentChange }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [lastEditBy, setLastEditBy] = useState(null);
   const isRemoteUpdate = useRef(false);
   const typingTimeoutRef = useRef(null);
+
+  // Refs so useEditor's onUpdate closure always reads current values
+  const documentRef = useRef(document);
+  const workspaceIdRef = useRef(workspaceId);
+  const socketRef = useRef(socket);
+  const currentUserRef = useRef(currentUser);
+
+  const onContentChangeRef = useRef(onContentChange);
+  const saveTimeoutRef = useRef(null);
+  const pendingContentRef = useRef(null);
+
+  useEffect(() => { documentRef.current = document; }, [document]);
+  useEffect(() => { workspaceIdRef.current = workspaceId; }, [workspaceId]);
+  useEffect(() => { socketRef.current = socket; }, [socket]);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  useEffect(() => { onContentChangeRef.current = onContentChange; }, [onContentChange]);
+
+  const flushSave = useCallback((content) => {
+    const docId = documentRef.current?.document_id;
+    if (!docId || content == null) return;
+    pendingContentRef.current = null;
+    setIsSaving(true);
+    client.put(`/documents/${docId}`, { content })
+      .then(() => {
+        setLastSaved(new Date());
+        onContentChangeRef.current?.(docId, content);
+      })
+      .catch((error) => {
+        console.error('Failed to save document:', error);
+        toast.error('Failed to save changes');
+      })
+      .finally(() => setIsSaving(false));
+  }, []);
+
+  const handleContentChange = useCallback((content) => {
+    const sock = socketRef.current;
+    const doc = documentRef.current;
+    const user = currentUserRef.current;
+    const wsId = workspaceIdRef.current;
+
+    if (sock?.connected && !isRemoteUpdate.current) {
+      sock.emit('document_update', {
+        document_id: doc?.document_id,
+        workspace_id: wsId,
+        content,
+        user_id: user?.user_id,
+        user_name: user?.name
+      });
+    }
+
+    pendingContentRef.current = content;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      flushSave(content);
+    }, 1000);
+  }, [flushSave]);
+
+  const broadcastTyping = useCallback(() => {
+    const sock = socketRef.current;
+    const doc = documentRef.current;
+    const user = currentUserRef.current;
+    const wsId = workspaceIdRef.current;
+    if (!sock) return;
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+    sock.emit('typing_start', {
+      document_id: doc?.document_id,
+      workspace_id: wsId,
+      user_id: user?.user_id,
+      user_name: user?.name,
+      isTyping: true
+    });
+
+    typingTimeoutRef.current = setTimeout(() => {
+      sock.emit('typing_stop', {
+        document_id: doc?.document_id,
+        workspace_id: wsId,
+        user_id: user?.user_id,
+        user_name: user?.name,
+        isTyping: false
+      });
+    }, 1000);
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -44,6 +126,7 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
     },
   });
 
+  // Sync editor content when switching documents
   useEffect(() => {
     if (editor && document.content !== editor.getHTML()) {
       isRemoteUpdate.current = true;
@@ -52,31 +135,41 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
     }
   }, [document.document_id]);
 
+  // Flush pending save on document switch or unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (pendingContentRef.current != null) {
+        flushSave(pendingContentRef.current);
+      }
+    };
+  }, [document.document_id, flushSave]);
+
+  // Socket listeners for real-time collaboration
   useEffect(() => {
     if (!socket || !editor) return;
 
     const handleDocumentUpdate = (data) => {
       if (data.document_id === document.document_id) {
-        // Don't update if it's from current user
         if (data.user_id === currentUser?.user_id) return;
 
         const currentContent = editor.getHTML();
         if (currentContent !== data.content) {
-          // Save cursor position
           const { from, to } = editor.state.selection;
           
           isRemoteUpdate.current = true;
           editor.commands.setContent(data.content, false);
           isRemoteUpdate.current = false;
 
-          // Try to restore cursor position
           try {
             editor.commands.setTextSelection({ from, to });
           } catch (e) {
             // Cursor position might be invalid after update
           }
 
-          // Show who made the edit
           if (data.user_name) {
             setLastEditBy(data.user_name);
             setTimeout(() => setLastEditBy(null), 3000);
@@ -97,7 +190,6 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
           return newSet;
         });
 
-        // Auto-remove after 3 seconds
         if (data.isTyping) {
           setTimeout(() => {
             setTypingUsers(prev => {
@@ -118,71 +210,6 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
       socket.off('typing_indicator', handleTypingIndicator);
     };
   }, [socket, document.document_id, editor, currentUser]);
-
-  const broadcastTyping = () => {
-    if (!socket) return;
-
-    // Clear previous timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    // Send typing start
-    socket.emit('typing_start', {
-      document_id: document.document_id,
-      workspace_id: workspaceId,
-      user_id: currentUser?.user_id,
-      user_name: currentUser?.name,
-      isTyping: true
-    });
-
-    // Send typing stop after 1 second of inactivity
-    typingTimeoutRef.current = setTimeout(() => {
-      socket.emit('typing_stop', {
-        document_id: document.document_id,
-        workspace_id: workspaceId,
-        user_id: currentUser?.user_id,
-        user_name: currentUser?.name,
-        isTyping: false
-      });
-    }, 1000);
-  };
-
-  const handleContentChange = async (content) => {
-    // Emit real-time update
-    if (socket?.connected && !isRemoteUpdate.current) {
-      socket.emit('document_update', {
-        document_id: document.document_id,
-        workspace_id: workspaceId,
-        content: content,
-        user_id: currentUser?.user_id,
-        user_name: currentUser?.name
-      });
-    }
-
-    // Debounced save to backend
-    clearTimeout(window.saveTimeout);
-    window.saveTimeout = setTimeout(async () => {
-      await saveDocument(content);
-    }, 1000);
-  };
-
-  const saveDocument = async (content) => {
-    setIsSaving(true);
-    try {
-      await axios.put(
-        `${API}/documents/${document.document_id}`,
-        { content },
-        { withCredentials: true }
-      );
-      setLastSaved(new Date());
-    } catch (error) {
-      console.error('Failed to save document:', error);
-      toast.error('Failed to save changes');
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   if (!editor) {
     return null;
