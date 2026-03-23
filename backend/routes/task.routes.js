@@ -3,7 +3,6 @@ const taskController = require("../controllers/task.controller");
 const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
-
 router.use(authMiddleware);
 
 router.get("/", taskController.list);

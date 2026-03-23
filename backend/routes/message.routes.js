@@ -3,7 +3,6 @@ const messageController = require("../controllers/message.controller");
 const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
-
 router.use(authMiddleware);
 
 router.get("/", messageController.list);

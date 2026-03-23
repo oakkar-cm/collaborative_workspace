@@ -26,6 +26,7 @@ const WorkspacePage = () => {
   const navigate = useNavigate();
   const socketRef = useRef(null);
   const fileInputRef = useRef(null);
+  const currentUserRef = useRef(null);
 
   const [workspace, setWorkspace] = useState(null);
   const [documents, setDocuments] = useState([]);
@@ -69,6 +70,7 @@ const WorkspacePage = () => {
       ]);
 
       setCurrentUser(userRes.data);
+      currentUserRef.current = userRes.data;
       setWorkspace(workspaceRes.data);
 
       const [docsRes, messagesRes, tasksRes, filesRes, membersRes] = await Promise.allSettled([
@@ -109,27 +111,29 @@ const WorkspacePage = () => {
     });
 
     socketRef.current.on('message', (data) => {
+      if (data.user_id === currentUserRef.current?.user_id) return;
       setMessages(prev => [...prev, data]);
       scrollToBottom();
     });
 
     socketRef.current.on('task', (data) => {
+      if (data.user_id === currentUserRef.current?.user_id) return;
       setTasks(prev => [...prev, data]);
-      toast.success('New task created');
     });
 
     socketRef.current.on('task_update', (data) => {
+      if (data.user_id === currentUserRef.current?.user_id) return;
       setTasks(prev => prev.map(t => t.task_id === data.task_id ? data : t));
     });
 
     socketRef.current.on('task_deleted', (data) => {
+      if (data.user_id === currentUserRef.current?.user_id) return;
       setTasks(prev => prev.filter(t => t.task_id !== data.task_id));
-      toast.info('A task was deleted');
     });
 
     socketRef.current.on('file', (data) => {
+      if (data.user_id === currentUserRef.current?.user_id) return;
       setFiles(prev => [...prev, data]);
-      toast.success('New file uploaded');
     });
 
     socketRef.current.on('disconnect', () => {
@@ -172,11 +176,13 @@ const WorkspacePage = () => {
     if (!messageInput.trim()) return;
 
     try {
-      await client.post(
+      const response = await client.post(
         '/messages',
         { workspace_id: workspaceId, content: messageInput }
       );
+      setMessages(prev => [...prev, response.data]);
       setMessageInput('');
+      scrollToBottom();
     } catch (error) {
       console.error('Failed to send message:', error);
       toast.error('Failed to send message');
@@ -190,7 +196,7 @@ const WorkspacePage = () => {
     }
 
     try {
-      await client.post(
+      const response = await client.post(
         '/tasks',
         { 
           workspace_id: workspaceId, 
@@ -199,6 +205,7 @@ const WorkspacePage = () => {
         }
       );
 
+      setTasks(prev => [...prev, response.data]);
       setNewTaskTitle('');
       setNewTaskDesc('');
       setShowNewTaskDialog(false);
@@ -211,10 +218,11 @@ const WorkspacePage = () => {
 
   const handleUpdateTaskStatus = async (taskId, newStatus) => {
     try {
-      await client.put(
+      const response = await client.put(
         `/tasks/${taskId}`,
         { status: newStatus }
       );
+      setTasks(prev => prev.map(t => t.task_id === response.data.task_id ? response.data : t));
     } catch (error) {
       console.error('Failed to update task:', error);
       toast.error('Failed to update task');
@@ -231,11 +239,12 @@ const WorkspacePage = () => {
 
     setUploadingFile(true);
     try {
-      await client.post(
+      const response = await client.post(
         '/files/upload',
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' } }
       );
+      setFiles(prev => [...prev, response.data]);
       toast.success('File uploaded!');
     } catch (error) {
       console.error('Failed to upload file:', error);

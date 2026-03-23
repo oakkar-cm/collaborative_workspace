@@ -3,7 +3,6 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
-import client from '../api/client';
 import { toast } from 'sonner';
 import { 
   Bold, Italic, Strikethrough, Code, List, ListOrdered, 
@@ -11,100 +10,90 @@ import {
   User
 } from 'lucide-react';
 import { Button } from './ui/button';
+import client from '../api/client';
 
-const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, members, onContentChange }) => {
+const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, members }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [lastEditBy, setLastEditBy] = useState(null);
   const isRemoteUpdate = useRef(false);
   const typingTimeoutRef = useRef(null);
-
-  // Refs so useEditor's onUpdate closure always reads current values
-  const documentRef = useRef(document);
-  const workspaceIdRef = useRef(workspaceId);
-  const socketRef = useRef(socket);
-  const currentUserRef = useRef(currentUser);
-
-  const onContentChangeRef = useRef(onContentChange);
   const saveTimeoutRef = useRef(null);
-  const pendingContentRef = useRef(null);
 
-  useEffect(() => { documentRef.current = document; }, [document]);
-  useEffect(() => { workspaceIdRef.current = workspaceId; }, [workspaceId]);
+  const socketRef = useRef(socket);
+  const documentRef = useRef(document);
+  const currentUserRef = useRef(currentUser);
+  const workspaceIdRef = useRef(workspaceId);
+
   useEffect(() => { socketRef.current = socket; }, [socket]);
+  useEffect(() => { documentRef.current = document; }, [document]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
-  useEffect(() => { onContentChangeRef.current = onContentChange; }, [onContentChange]);
+  useEffect(() => { workspaceIdRef.current = workspaceId; }, [workspaceId]);
 
-  const flushSave = useCallback((content) => {
-    const docId = documentRef.current?.document_id;
-    if (!docId || content == null) return;
-    pendingContentRef.current = null;
+  const saveDocument = useCallback(async (content) => {
     setIsSaving(true);
-    client.put(`/documents/${docId}`, { content })
-      .then(() => {
-        setLastSaved(new Date());
-        onContentChangeRef.current?.(docId, content);
-      })
-      .catch((error) => {
-        console.error('Failed to save document:', error);
-        toast.error('Failed to save changes');
-      })
-      .finally(() => setIsSaving(false));
+    try {
+      await client.put(
+        `/documents/${documentRef.current.document_id}`,
+        { content }
+      );
+      setLastSaved(new Date());
+    } catch (error) {
+      console.error('Failed to save document:', error);
+      toast.error('Failed to save changes');
+    } finally {
+      setIsSaving(false);
+    }
   }, []);
 
-  const handleContentChange = useCallback((content) => {
-    const sock = socketRef.current;
-    const doc = documentRef.current;
-    const user = currentUserRef.current;
-    const wsId = workspaceIdRef.current;
+  const broadcastTyping = useCallback(() => {
+    const s = socketRef.current;
+    if (!s) return;
 
-    if (sock?.connected && !isRemoteUpdate.current) {
-      sock.emit('document_update', {
-        document_id: doc?.document_id,
-        workspace_id: wsId,
-        content,
-        user_id: user?.user_id,
-        user_name: user?.name
-      });
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
     }
 
-    pendingContentRef.current = content;
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      flushSave(content);
-    }, 1000);
-  }, [flushSave]);
-
-  const broadcastTyping = useCallback(() => {
-    const sock = socketRef.current;
-    const doc = documentRef.current;
-    const user = currentUserRef.current;
-    const wsId = workspaceIdRef.current;
-    if (!sock) return;
-
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-
-    sock.emit('typing_start', {
-      document_id: doc?.document_id,
-      workspace_id: wsId,
-      user_id: user?.user_id,
-      user_name: user?.name,
+    s.emit('typing_start', {
+      document_id: documentRef.current.document_id,
+      workspace_id: workspaceIdRef.current,
+      user_id: currentUserRef.current?.user_id,
+      user_name: currentUserRef.current?.name,
       isTyping: true
     });
 
     typingTimeoutRef.current = setTimeout(() => {
-      sock.emit('typing_stop', {
-        document_id: doc?.document_id,
-        workspace_id: wsId,
-        user_id: user?.user_id,
-        user_name: user?.name,
+      s.emit('typing_stop', {
+        document_id: documentRef.current.document_id,
+        workspace_id: workspaceIdRef.current,
+        user_id: currentUserRef.current?.user_id,
+        user_name: currentUserRef.current?.name,
         isTyping: false
       });
     }, 1000);
   }, []);
 
+  const handleContentChange = useCallback((content) => {
+    const s = socketRef.current;
+    if (s?.connected && !isRemoteUpdate.current) {
+      s.emit('document_update', {
+        document_id: documentRef.current.document_id,
+        workspace_id: workspaceIdRef.current,
+        content: content,
+        user_id: currentUserRef.current?.user_id,
+        user_name: currentUserRef.current?.name
+      });
+    }
+
+    clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveDocument(content);
+    }, 1000);
+  }, [saveDocument]);
+
   const editor = useEditor({
+    immediatelyRender: true,
     extensions: [
       StarterKit,
       Underline,
@@ -126,79 +115,64 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
     },
   });
 
-  // Sync editor content when switching documents
   useEffect(() => {
     if (editor && document.content !== editor.getHTML()) {
       isRemoteUpdate.current = true;
       editor.commands.setContent(document.content || '', false);
       isRemoteUpdate.current = false;
     }
-  }, [document.document_id]);
+  }, [document.document_id, editor]);
 
-  // Flush pending save on document switch or unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-      if (pendingContentRef.current != null) {
-        flushSave(pendingContentRef.current);
-      }
-    };
-  }, [document.document_id, flushSave]);
-
-  // Socket listeners for real-time collaboration
   useEffect(() => {
     if (!socket || !editor) return;
 
     const handleDocumentUpdate = (data) => {
-      if (data.document_id === document.document_id) {
-        if (data.user_id === currentUser?.user_id) return;
+      if (data.document_id !== documentRef.current.document_id) return;
+      if (data.user_id === currentUserRef.current?.user_id) return;
 
-        const currentContent = editor.getHTML();
-        if (currentContent !== data.content) {
-          const { from, to } = editor.state.selection;
-          
-          isRemoteUpdate.current = true;
-          editor.commands.setContent(data.content, false);
-          isRemoteUpdate.current = false;
+      const currentContent = editor.getHTML();
+      if (currentContent !== data.content) {
+        const { from, to } = editor.state.selection;
 
-          try {
-            editor.commands.setTextSelection({ from, to });
-          } catch (e) {
-            // Cursor position might be invalid after update
-          }
+        isRemoteUpdate.current = true;
+        editor.commands.setContent(data.content, false);
+        isRemoteUpdate.current = false;
 
-          if (data.user_name) {
-            setLastEditBy(data.user_name);
-            setTimeout(() => setLastEditBy(null), 3000);
-          }
+        try {
+          editor.commands.setTextSelection({ from, to });
+        } catch (e) {
+          // Cursor position might be invalid after content change
+        }
+
+        if (data.user_name) {
+          setLastEditBy(data.user_name);
+          setTimeout(() => setLastEditBy(null), 3000);
         }
       }
     };
 
     const handleTypingIndicator = (data) => {
-      if (data.document_id === document.document_id && data.user_id !== currentUser?.user_id) {
-        setTypingUsers(prev => {
-          const newSet = new Set(prev);
-          if (data.isTyping) {
-            newSet.add(data.user_name);
-          } else {
-            newSet.delete(data.user_name);
-          }
-          return newSet;
-        });
+      if (data.document_id !== documentRef.current.document_id) return;
+      if (data.user_id === currentUserRef.current?.user_id) return;
 
+      setTypingUsers(prev => {
+        const newSet = new Set(prev);
         if (data.isTyping) {
-          setTimeout(() => {
-            setTypingUsers(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(data.user_name);
-              return newSet;
-            });
-          }, 3000);
+          newSet.add(data.user_name);
+        } else {
+          newSet.delete(data.user_name);
         }
+        return newSet;
+      });
+
+      if (data.isTyping) {
+        setTimeout(() => {
+          setTypingUsers(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(data.user_name);
+            return newSet;
+          });
+        }, 3000);
       }
     };
 
@@ -209,7 +183,14 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
       socket.off('document_update', handleDocumentUpdate);
       socket.off('typing_indicator', handleTypingIndicator);
     };
-  }, [socket, document.document_id, editor, currentUser]);
+  }, [socket, editor]);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(saveTimeoutRef.current);
+      clearTimeout(typingTimeoutRef.current);
+    };
+  }, []);
 
   if (!editor) {
     return null;

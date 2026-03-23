@@ -1,25 +1,28 @@
 const File = require("../models/File");
 
-async function getByWorkspace(workspaceId) {
-  return File.find({ workspace_id: workspaceId }).sort({ createdAt: -1 });
-}
-
-async function create(workspaceId, fileData, userId) {
-  const file = new File({
+async function upload(workspaceId, file, userId) {
+  const doc = new File({
     workspace_id: workspaceId,
-    filename: fileData.filename,
-    original_name: fileData.originalname,
-    path: fileData.path,
-    size: fileData.size,
-    mimetype: fileData.mimetype,
+    filename: file.originalname,
+    mimetype: file.mimetype,
+    size: file.size,
+    data: file.buffer,
     uploaded_by: userId
   });
-  await file.save();
-  return file;
+  await doc.save();
+  return formatFile(doc);
 }
 
-async function getById(fileId) {
-  const file = await File.findById(fileId);
+async function listByWorkspace(workspaceId) {
+  const files = await File.find({ workspace_id: workspaceId })
+    .select("-data")
+    .sort({ createdAt: -1 })
+    .lean();
+  return files.map(formatFile);
+}
+
+async function download(fileId) {
+  const file = await File.findById(fileId).lean();
   if (!file) {
     const err = new Error("File not found");
     err.statusCode = 404;
@@ -28,4 +31,16 @@ async function getById(fileId) {
   return file;
 }
 
-module.exports = { getByWorkspace, create, getById };
+function formatFile(f) {
+  return {
+    file_id: f._id,
+    workspace_id: f.workspace_id,
+    filename: f.filename,
+    mimetype: f.mimetype,
+    size: f.size,
+    uploaded_by: f.uploaded_by,
+    uploaded_at: f.uploaded_at || f.createdAt
+  };
+}
+
+module.exports = { upload, listByWorkspace, download };
