@@ -10,6 +10,7 @@ router.use(authMiddleware);
 router.post("/", requireWorkspaceName, workspaceController.create);
 router.get("/", workspaceController.list);
 router.get("/:id", workspaceController.getById);
+router.put("/:id", workspaceController.update);
 router.delete("/:id", workspaceController.remove);
 router.get("/:id/members", workspaceController.getMembers);
 router.post("/:id/invite", workspaceController.invite);

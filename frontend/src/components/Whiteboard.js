@@ -150,7 +150,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     setTexts(updTexts);
     setPaths(updPaths);
     setSelectedId(null);
-    broadcastUpdate('delete', { stickyNotes: updNotes, shapes: updShapes, texts: updTexts });
+    broadcastUpdate('delete', { stickyNotes: updNotes, shapes: updShapes, paths: updPaths, texts: updTexts });
   }, [selectedId, stickyNotes, shapes, texts, paths, broadcastUpdate]);
 
   // ─── Wheel → zoom toward cursor ───────────────────────────────────

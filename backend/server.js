@@ -4,15 +4,16 @@ const app = require("./app");
 const { connect } = require("./db");
 const config = require("./config");
 const logger = require("./utils/logger");
+const { initializeSocket } = require("./socket");
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" }
+  cors: { origin: "*" },
+  path: "/api/socket.io"
 });
 
-io.on("connection", (socket) => {
-  logger.info("User connected:", socket.id);
-});
+app.set("io", io);
+initializeSocket(io);
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
