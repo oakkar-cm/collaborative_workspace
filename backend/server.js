@@ -6,8 +6,15 @@ const config = require("./config");
 const logger = require("./utils/logger");
 
 const server = http.createServer(app);
+const allowedOrigins = new Set(config.corsOrigins);
 const io = new Server(server, {
-  cors: { origin: "*" },
+  cors: {
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      return callback(new Error("Socket CORS origin not allowed"));
+    }
+  },
   path: "/api/socket.io"
 });
 

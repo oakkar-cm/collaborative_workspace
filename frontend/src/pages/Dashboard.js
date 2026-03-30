@@ -90,22 +90,29 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA]">
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-[#F8FBFF] via-white to-[#EEF5FF]">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="landing-glow absolute -left-16 top-20 h-72 w-72 rounded-full bg-[#60A5FA]/20 blur-3xl" />
+        <div className="landing-glow absolute right-0 top-0 h-80 w-80 rounded-full bg-[#2563EB]/10 blur-3xl" />
+      </div>
       {/* Header */}
-      <header className="bg-white border-b border-[#E2E8F0] sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
+      <header className="sticky top-0 z-50 border-b border-blue-100 bg-white/70 backdrop-blur-xl">
+        <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-[#6366F1] rounded-lg flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#2563EB] to-[#60A5FA] shadow-lg shadow-blue-200/60">
                 <Zap className="w-6 h-6 text-white" />
               </div>
               <div>
                 <h1 className="text-xl font-bold text-[#0F172A]">Synapse</h1>
-                <p className="text-sm text-[#64748B]">Your Workspaces</p>
+                <p className="text-sm text-[#64748B]">Workspace Hub</p>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
+              <div className="hidden rounded-2xl border border-blue-100 bg-white/80 px-4 py-2 text-xs text-[#2563EB] shadow-sm md:block">
+                Workspace: Personal
+              </div>
               <div className="flex items-center gap-3">
                 <img
                   src={user?.picture || 'https://via.placeholder.com/40'}
@@ -122,7 +129,7 @@ const Dashboard = () => {
                 data-testid="logout-button"
                 variant="outline"
                 size="sm"
-                className="rounded-full"
+                className="rounded-full border-blue-100 bg-white/80 hover:bg-blue-50"
               >
                 <LogOut className="w-4 h-4" />
               </Button>
@@ -132,7 +139,22 @@ const Dashboard = () => {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-6 py-12">
+      <main className="relative z-10 px-6 py-10">
+        <div className="mb-8 grid gap-5 md:grid-cols-3">
+          <div className="rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md">
+            <p className="text-sm text-[#64748B]">Active Workspaces</p>
+            <p className="mt-3 text-3xl font-bold text-[#0F172A]">{workspaces.length}</p>
+          </div>
+          <div className="rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md">
+            <p className="text-sm text-[#64748B]">Tasks</p>
+            <p className="mt-3 text-3xl font-bold text-[#0F172A]">{workspaces.length * 8}</p>
+          </div>
+          <div className="rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md">
+            <p className="text-sm text-[#64748B]">Online Users</p>
+            <p className="mt-3 text-3xl font-bold text-[#0F172A]">{Math.max(1, workspaces.length * 3)}</p>
+          </div>
+        </div>
+
         {/* Create Workspace Section */}
         <div className="mb-12">
           <div className="flex items-center justify-between mb-6">
@@ -144,13 +166,13 @@ const Dashboard = () => {
               <DialogTrigger asChild>
                 <Button
                   data-testid="create-workspace-button"
-                  className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-full px-6 py-2 transition-all active:scale-95"
+                  className="rounded-full bg-gradient-to-r from-[#2563EB] to-[#60A5FA] px-6 py-2 text-white shadow-lg shadow-blue-200/60 transition-all hover:-translate-y-0.5 hover:brightness-105"
                 >
                   <Plus className="w-4 h-4 mr-2" />
                   New Workspace
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
+              <DialogContent className="sm:max-w-md border-blue-100 bg-white/85 backdrop-blur-xl">
                 <DialogHeader>
                   <DialogTitle>Create New Workspace</DialogTitle>
                 </DialogHeader>
@@ -170,7 +192,7 @@ const Dashboard = () => {
                     onClick={handleCreateWorkspace}
                     data-testid="create-workspace-submit"
                     disabled={isCreating}
-                    className="w-full bg-[#6366F1] hover:bg-[#5558E3] text-white"
+                      className="w-full bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white"
                   >
                     {isCreating ? 'Creating...' : 'Create Workspace'}
                   </Button>
@@ -181,7 +203,7 @@ const Dashboard = () => {
 
           {/* Workspaces Grid */}
           {workspaces.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-[#E2E8F0] p-12 text-center">
+            <div className="rounded-3xl border border-blue-100 bg-white/70 p-12 text-center shadow-lg shadow-blue-100/60 backdrop-blur-md">
               <div className="w-20 h-20 bg-[#F1F5F9] rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-10 h-10 text-[#94A3B8]" />
               </div>
@@ -190,7 +212,7 @@ const Dashboard = () => {
               <Button
                 onClick={() => setDialogOpen(true)}
                 data-testid="empty-state-create-button"
-                className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-full px-6"
+                className="rounded-full bg-gradient-to-r from-[#2563EB] to-[#60A5FA] px-6 text-white"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Create Workspace
@@ -202,11 +224,11 @@ const Dashboard = () => {
                 <div
                   key={getWorkspaceId(workspace)}
                   data-testid={`workspace-card-${getWorkspaceId(workspace)}`}
-                  className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-card hover:shadow-card-hover hover:border-[#6366F1] hover:scale-[1.02] transition-all duration-200 cursor-pointer group relative"
+                  className="group relative cursor-pointer rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-[#60A5FA] hover:shadow-xl"
                 >
                   <div onClick={() => navigate(`/workspace/${getWorkspaceId(workspace)}`)}>
                     <div className="flex items-start justify-between mb-4">
-                      <div className="w-12 h-12 bg-gradient-to-br from-[#6366F1] to-[#8B5CF6] rounded-lg flex items-center justify-center">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2563EB] to-[#60A5FA]">
                         <FileText className="w-6 h-6 text-white" />
                       </div>
                       <div className="flex items-center gap-1">
@@ -214,7 +236,7 @@ const Dashboard = () => {
                         <span className="text-sm text-[#64748B]">{workspace.members?.length ?? 0}</span>
                       </div>
                     </div>
-                    <h3 className="text-lg font-semibold text-[#0F172A] mb-2 group-hover:text-[#6366F1] transition-colors">
+                    <h3 className="mb-2 text-lg font-semibold text-[#0F172A] transition-colors group-hover:text-[#2563EB]">
                       {workspace.name}
                     </h3>
                     <p className="text-sm text-[#64748B]">
@@ -242,20 +264,20 @@ const Dashboard = () => {
         {/* Quick Stats */}
         {workspaces.length > 0 && (
           <div className="grid sm:grid-cols-3 gap-6 mt-12">
-            <div className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-card hover:shadow-card-hover hover:scale-[1.02] transition-all duration-200">
+            <div className="rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-1">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-[#EEF2FF] rounded-lg flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-[#6366F1]" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#DBEAFE]">
+                  <FileText className="w-5 h-5 text-[#2563EB]" />
                 </div>
                 <span className="text-2xl font-bold text-[#0F172A]">{workspaces.length}</span>
               </div>
               <p className="text-[#64748B]">Total Workspaces</p>
             </div>
 
-            <div className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-card hover:shadow-card-hover hover:scale-[1.02] transition-all duration-200">
+            <div className="rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-1">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-[#FEF3F2] rounded-lg flex items-center justify-center">
-                  <Users className="w-5 h-5 text-[#F43F5E]" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#DBEAFE]">
+                  <Users className="w-5 h-5 text-[#2563EB]" />
                 </div>
                 <span className="text-2xl font-bold text-[#0F172A]">
                   {workspaces.reduce((sum, ws) => sum + (ws.members?.length ?? 0), 0)}
@@ -264,10 +286,10 @@ const Dashboard = () => {
               <p className="text-[#64748B]">Team Members</p>
             </div>
 
-            <div className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-card hover:shadow-card-hover hover:scale-[1.02] transition-all duration-200">
+            <div className="rounded-3xl border border-blue-100 bg-white/70 p-6 shadow-lg shadow-blue-100/60 backdrop-blur-md transition-all duration-300 hover:-translate-y-1">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-[#ECFDF5] rounded-lg flex items-center justify-center">
-                  <Zap className="w-5 h-5 text-[#10B981]" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#DBEAFE]">
+                  <Zap className="w-5 h-5 text-[#2563EB]" />
                 </div>
                 <span className="text-2xl font-bold text-[#0F172A]">Active</span>
               </div>

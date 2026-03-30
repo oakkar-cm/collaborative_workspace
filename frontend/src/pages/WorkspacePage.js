@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import io from 'socket.io-client';
 import { 
   ArrowLeft, FileText, MessageSquare, CheckSquare, Upload, 
-  Users, Send, Plus, Download, X, Check, Circle, Trash2
+  Users, Send, Plus, Download, X, Check, Circle, Trash2, Columns3
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -136,6 +136,11 @@ const WorkspacePage = () => {
       setFiles(prev => [...prev, data]);
     });
 
+    socketRef.current.on('file_deleted', (data) => {
+      if (data.user_id === currentUserRef.current?.user_id) return;
+      setFiles(prev => prev.filter(f => f.file_id !== data.file_id));
+    });
+
     socketRef.current.on('disconnect', () => {
       console.log('Disconnected from WebSocket');
     });
@@ -255,6 +260,18 @@ const WorkspacePage = () => {
     }
   };
 
+  const handleDeleteFile = async (fileId) => {
+    if (!window.confirm('Are you sure you want to delete this file?')) return;
+    try {
+      await client.delete(`/files/${fileId}`);
+      setFiles(prev => prev.filter(f => f.file_id !== fileId));
+      toast.success('File deleted');
+    } catch (error) {
+      console.error('Failed to delete file:', error);
+      toast.error('Failed to delete file');
+    }
+  };
+
   const handleDownloadFile = async (fileId, filename) => {
     try {
       const response = await client.get(
@@ -362,9 +379,13 @@ const WorkspacePage = () => {
   const doneTasks = tasks.filter(t => t.status === 'done');
 
   return (
-    <div className="h-screen flex flex-col bg-[#F8F9FA]">
+    <div className="relative h-screen flex flex-col overflow-hidden bg-gradient-to-br from-[#F8FBFF] via-white to-[#EEF5FF]">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="landing-glow absolute -left-16 top-20 h-72 w-72 rounded-full bg-[#60A5FA]/20 blur-3xl" />
+        <div className="landing-glow absolute right-0 top-0 h-80 w-80 rounded-full bg-[#2563EB]/10 blur-3xl" />
+      </div>
       {/* Header */}
-      <header className="bg-white border-b border-[#E2E8F0] flex-shrink-0">
+      <header className="z-20 flex-shrink-0 border-b border-blue-100 bg-white/70 backdrop-blur-xl">
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -373,7 +394,7 @@ const WorkspacePage = () => {
                 data-testid="back-to-dashboard"
                 variant="ghost"
                 size="sm"
-                className="rounded-full"
+                className="rounded-full bg-white/80 hover:bg-blue-50"
               >
                 <ArrowLeft className="w-4 h-4" />
               </Button>
@@ -388,7 +409,7 @@ const WorkspacePage = () => {
               <Button
                 onClick={() => setShowInviteDialog(true)}
                 data-testid="invite-user-button"
-                className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-full px-4 py-2 transition-all active:scale-95"
+                className="rounded-full bg-gradient-to-r from-[#2563EB] to-[#60A5FA] px-4 py-2 text-white shadow-md shadow-blue-200/60 transition-all hover:brightness-105"
               >
                 <Users className="w-4 h-4 mr-2" />
                 Invite
@@ -415,14 +436,14 @@ const WorkspacePage = () => {
       </header>
 
       {/* Main Content - Three Pane Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="relative z-10 flex flex-1 overflow-hidden">
         {/* Left Sidebar - Documents */}
-        <div className="w-64 bg-white border-r border-[#E2E8F0] flex flex-col">
-          <div className="p-4 border-b border-[#E2E8F0]">
+        <div className="flex w-64 flex-col border-r border-blue-100 bg-white/60 backdrop-blur-lg">
+          <div className="border-b border-blue-100 p-4">
             <Button
               onClick={() => setShowNewDocDialog(true)}
               data-testid="new-document-button"
-              className="w-full bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-md transition-all active:scale-95"
+              className="w-full rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white shadow-md shadow-blue-200/60"
             >
               <Plus className="w-4 h-4 mr-2" />
               New Document
@@ -471,23 +492,23 @@ const WorkspacePage = () => {
         </div>
 
         {/* Center - Editor/Chat/Tasks */}
-        <div className="flex-1 flex flex-col bg-white min-h-0 overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-tl-2xl bg-white/70 backdrop-blur-sm">
           {/* Tab navigation */}
-          <div className="flex items-center border-b border-[#E2E8F0] flex-shrink-0">
+          <div className="flex flex-shrink-0 items-center border-b border-blue-100 bg-white/60 px-2">
             {[
               { id: 'editor', label: 'Editor', icon: FileText },
               { id: 'whiteboard', label: 'Whiteboard', icon: CheckSquare },
               { id: 'chat', label: 'Chat', icon: MessageSquare },
-              { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+              { id: 'tasks', label: 'Tasks', icon: Columns3 },
             ].map((tab) => (
               <button
                 key={tab.id}
                 data-testid={`tab-${tab.id}`}
                 onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex items-center px-3 py-2 text-sm font-medium transition-all ${
+                className={`inline-flex items-center rounded-xl px-3 py-2 text-sm font-medium transition-all ${
                   activeTab === tab.id
-                    ? 'text-[#0F172A] border-b-2 border-[#6366F1]'
-                    : 'text-[#64748B] hover:text-[#0F172A]'
+                    ? 'bg-[#DBEAFE] text-[#1E3A8A]'
+                    : 'text-[#64748B] hover:bg-blue-50 hover:text-[#0F172A]'
                 }`}
               >
                 <tab.icon className="w-4 h-4 mr-2" />
@@ -501,7 +522,8 @@ const WorkspacePage = () => {
             {/* Editor */}
             <div className="absolute inset-0 overflow-hidden" style={{ display: activeTab === 'editor' ? 'block' : 'none' }}>
               {activeDocument ? (
-                <CollaborativeEditor 
+                <CollaborativeEditor
+                  key={activeDocument.document_id}
                   document={activeDocument} 
                   workspaceId={workspaceId}
                   socket={socketRef.current}
@@ -547,21 +569,31 @@ const WorkspacePage = () => {
                   <div 
                     key={msg.message_id}
                     data-testid={`message-${msg.message_id}`}
-                    className="flex gap-3 animate-fade-in"
+                    className={`flex gap-3 animate-fade-in ${msg.user_id === currentUser?.user_id ? 'justify-end' : ''}`}
                   >
-                    <img
-                      src={msg.user_picture || 'https://via.placeholder.com/40'}
-                      alt={msg.user_name}
-                      className="w-10 h-10 rounded-full flex-shrink-0"
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-baseline gap-2 mb-1">
+                    {msg.user_id !== currentUser?.user_id && (
+                      <img
+                        src={msg.user_picture || 'https://via.placeholder.com/40'}
+                        alt={msg.user_name}
+                        className="w-10 h-10 rounded-full flex-shrink-0"
+                      />
+                    )}
+                    <div className={`max-w-[70%] ${msg.user_id === currentUser?.user_id ? 'items-end' : ''}`}>
+                      <div className="mb-1 flex items-baseline gap-2">
                         <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
-                        <span className="text-xs text-[#94A3B8] text-mono">
+                        <span className="text-mono text-xs text-[#94A3B8]">
                           {new Date(msg.created_at).toLocaleTimeString()}
                         </span>
                       </div>
-                      <p className="text-[#0F172A]">{msg.content}</p>
+                      <p
+                        className={`rounded-2xl px-4 py-2 text-sm ${
+                          msg.user_id === currentUser?.user_id
+                            ? 'bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white'
+                            : 'bg-white/80 text-[#0F172A] border border-blue-100'
+                        }`}
+                      >
+                        {msg.content}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -575,20 +607,20 @@ const WorkspacePage = () => {
                 members={members}
               />
               
-              <div className="border-t border-[#E2E8F0] p-4">
-                <div className="flex gap-2">
+              <div className="border-t border-blue-100 p-4 bg-white/60 backdrop-blur-md">
+                <div className="flex gap-2 rounded-2xl border border-blue-100 bg-white/70 p-2">
                   <Input
                     value={messageInput}
                     onChange={(e) => setMessageInput(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     placeholder="Type a message..."
                     data-testid="chat-input"
-                    className="flex-1"
+                    className="h-10 flex-1 rounded-xl border-blue-100 bg-white/80 focus-visible:ring-[#2563EB]"
                   />
                   <Button
                     onClick={handleSendMessage}
                     data-testid="send-message-button"
-                    className="bg-[#6366F1] hover:bg-[#5558E3] text-white"
+                    className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white"
                   >
                     <Send className="w-4 h-4" />
                   </Button>
@@ -602,7 +634,7 @@ const WorkspacePage = () => {
                   <Button
                     onClick={() => setShowNewTaskDialog(true)}
                     data-testid="new-task-button"
-                    className="bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-md transition-all active:scale-95"
+                    className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white"
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     New Task
@@ -610,11 +642,11 @@ const WorkspacePage = () => {
                 </div>
 
                 <div className="grid md:grid-cols-3 gap-6">
-                  <div>
-                    <div className="flex items-center gap-2 mb-4">
+                  <div className="rounded-2xl border border-blue-100 bg-white/70 p-4 backdrop-blur-sm">
+                    <div className="mb-4 flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#3B82F6] to-[#60A5FA] px-3 py-2 text-white">
                       <Circle className="w-5 h-5 text-[#94A3B8]" />
-                      <h3 className="font-semibold text-[#0F172A]">To Do</h3>
-                      <span className="text-xs text-[#64748B] bg-[#F1F5F9] px-2 py-1 rounded-full">
+                      <h3 className="font-semibold">To Do</h3>
+                      <span className="rounded-full bg-white/25 px-2 py-1 text-xs">
                         {todoTasks.length}
                       </span>
                     </div>
@@ -630,11 +662,11 @@ const WorkspacePage = () => {
                     </div>
                   </div>
 
-                  <div>
-                    <div className="flex items-center gap-2 mb-4">
-                      <Circle className="w-5 h-5 text-[#F59E0B] fill-[#F59E0B]" />
-                      <h3 className="font-semibold text-[#0F172A]">In Progress</h3>
-                      <span className="text-xs text-[#64748B] bg-[#FEF3C7] px-2 py-1 rounded-full">
+                  <div className="rounded-2xl border border-blue-100 bg-white/70 p-4 backdrop-blur-sm">
+                    <div className="mb-4 flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#3B82F6] to-[#60A5FA] px-3 py-2 text-white">
+                      <Circle className="w-5 h-5 text-white fill-white" />
+                      <h3 className="font-semibold">In Progress</h3>
+                      <span className="rounded-full bg-white/25 px-2 py-1 text-xs">
                         {inProgressTasks.length}
                       </span>
                     </div>
@@ -650,11 +682,11 @@ const WorkspacePage = () => {
                     </div>
                   </div>
 
-                  <div>
-                    <div className="flex items-center gap-2 mb-4">
-                      <Check className="w-5 h-5 text-[#10B981]" />
-                      <h3 className="font-semibold text-[#0F172A]">Done</h3>
-                      <span className="text-xs text-[#64748B] bg-[#ECFDF5] px-2 py-1 rounded-full">
+                  <div className="rounded-2xl border border-blue-100 bg-white/70 p-4 backdrop-blur-sm">
+                    <div className="mb-4 flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#3B82F6] to-[#60A5FA] px-3 py-2 text-white">
+                      <Check className="w-5 h-5 text-white" />
+                      <h3 className="font-semibold">Done</h3>
+                      <span className="rounded-full bg-white/25 px-2 py-1 text-xs">
                         {doneTasks.length}
                       </span>
                     </div>
@@ -675,8 +707,8 @@ const WorkspacePage = () => {
         </div>
 
         {/* Right Sidebar - Files */}
-        <div className="w-80 bg-white border-l border-[#E2E8F0] flex flex-col">
-          <div className="p-4 border-b border-[#E2E8F0]">
+        <div className="flex w-80 flex-col border-l border-blue-100 bg-white/60 backdrop-blur-lg">
+          <div className="border-b border-blue-100 p-4">
             <input
               type="file"
               ref={fileInputRef}
@@ -687,7 +719,7 @@ const WorkspacePage = () => {
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadingFile}
               data-testid="upload-file-button"
-              className="w-full bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-md transition-all active:scale-95"
+              className="w-full rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white"
             >
               <Upload className="w-4 h-4 mr-2" />
               {uploadingFile ? 'Uploading...' : 'Upload File'}
@@ -714,14 +746,25 @@ const WorkspacePage = () => {
                         {new Date(file.uploaded_at).toLocaleDateString()}
                       </p>
                     </div>
-                    <Button
-                      onClick={() => handleDownloadFile(file.file_id, file.filename)}
-                      data-testid={`download-file-${file.file_id}`}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
+                    <div className="flex flex-col gap-1">
+                      <Button
+                        onClick={() => handleDownloadFile(file.file_id, file.filename)}
+                        data-testid={`download-file-${file.file_id}`}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Download className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        onClick={() => handleDeleteFile(file.file_id)}
+                        data-testid={`delete-file-${file.file_id}`}
+                        size="sm"
+                        variant="ghost"
+                        className="hover:bg-red-100 hover:text-red-600"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -880,7 +923,7 @@ const TaskCard = ({ task, onStatusChange, onDelete }) => {
   return (
     <div 
       data-testid={`task-card-${task.task_id}`}
-      className="bg-white border border-[#E2E8F0] rounded-lg p-4 shadow-card hover:shadow-card-hover hover:scale-[1.02] transition-all duration-200 group relative"
+      className="group relative rounded-2xl border border-blue-100 bg-white/80 p-4 shadow-md shadow-blue-100/60 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
     >
       <h4 className="font-medium text-[#0F172A] mb-2 pr-8">{task.title}</h4>
       {task.description && (

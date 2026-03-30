@@ -11,5 +11,6 @@ router.use(authMiddleware);
 router.get("/", fileController.list);
 router.post("/upload", upload.single("file"), fileController.upload);
 router.get("/:id/download", fileController.download);
+router.delete("/:id", fileController.remove);
 
 module.exports = router;

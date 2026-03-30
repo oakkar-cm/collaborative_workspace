@@ -43,4 +43,14 @@ function formatFile(f) {
   };
 }
 
-module.exports = { upload, listByWorkspace, download };
+async function remove(fileId) {
+  const file = await File.findByIdAndDelete(fileId).lean();
+  if (!file) {
+    const err = new Error("File not found");
+    err.statusCode = 404;
+    throw err;
+  }
+  return formatFile(file);
+}
+
+module.exports = { upload, listByWorkspace, download, remove };

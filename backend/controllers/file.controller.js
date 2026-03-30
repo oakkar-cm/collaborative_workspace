@@ -47,4 +47,17 @@ async function download(req, res, next) {
   }
 }
 
-module.exports = { upload, list, download };
+async function remove(req, res, next) {
+  try {
+    const file = await fileService.remove(req.params.id);
+
+    const io = req.app.get("io");
+    if (io) io.to(String(file.workspace_id)).emit("file_deleted", { file_id: file.file_id, user_id: req.user.userId });
+
+    res.json({ message: "File deleted" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { upload, list, download, remove };

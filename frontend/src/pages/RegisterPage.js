@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Zap, Mail, Lock, User } from 'lucide-react';
+import { Zap, Mail, Lock, User, ShieldCheck } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -16,6 +16,7 @@ const RegisterPage = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [backendOk, setBackendOk] = useState(null);
+  const passwordScore = Math.min(100, password.length * 20);
 
   useEffect(() => {
     client.get('/health')
@@ -48,27 +49,48 @@ const RegisterPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
-      <div
-        className="absolute inset-0 z-0"
-        style={{
-          background: 'radial-gradient(circle at 50% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%)',
-        }}
-      />
-      <nav className="relative z-10 container mx-auto px-6 py-6">
-        <Link to="/" className="flex items-center space-x-2 w-fit">
-          <div className="w-10 h-10 bg-[#6366F1] rounded-lg flex items-center justify-center">
-            <Zap className="w-6 h-6 text-white" />
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-[#F8FBFF] via-white to-[#EEF5FF]">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="landing-glow absolute -left-10 top-24 h-72 w-72 rounded-full bg-[#60A5FA]/25 blur-3xl" />
+        <div className="landing-glow absolute bottom-0 right-12 h-72 w-72 rounded-full bg-[#3B82F6]/20 blur-3xl" />
+      </div>
+      <nav className="relative z-10 px-6 py-6">
+        <Link to="/" className="flex w-fit items-center gap-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#2563EB] to-[#60A5FA] shadow-lg shadow-blue-200/60">
+            <Zap className="h-5 w-5 text-white" />
           </div>
-          <span className="text-xl font-bold text-[#0F172A]">Synapse</span>
+          <span className="text-xl font-semibold text-[#0F172A]">Synapse</span>
         </Link>
       </nav>
 
-      <div className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-md">
-          <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-8">
-            <h1 className="text-2xl font-bold text-[#0F172A] mb-2">Create an account</h1>
-            <p className="text-[#64748B] mb-6">Enter your details to get started</p>
+      <div className="relative z-10 grid min-h-[calc(100vh-88px)] grid-cols-1 items-center gap-8 px-6 pb-12 lg:grid-cols-2">
+        <div className="hidden lg:block">
+          <div className="relative mx-auto h-[540px] max-w-[560px]">
+            <div className="landing-float absolute left-10 top-14 h-24 w-44 rounded-3xl border border-white/50 bg-white/70 p-4 shadow-xl shadow-blue-200/50 backdrop-blur-md">
+              <p className="text-xs text-[#64748B]">New users today</p>
+              <p className="mt-1 text-2xl font-semibold text-[#2563EB]">1,512</p>
+            </div>
+            <div className="landing-float-slow absolute bottom-16 right-8 h-24 w-44 rounded-3xl border border-white/50 bg-white/80 p-4 shadow-xl shadow-blue-200/50 backdrop-blur-md">
+              <p className="text-xs text-[#64748B]">Security score</p>
+              <p className="mt-1 text-xl font-semibold text-[#2563EB]">A+</p>
+            </div>
+            <div className="landing-tilt absolute left-1/2 top-1/2 w-[90%] -translate-x-1/2 -translate-y-1/2 rounded-[28px] border border-blue-100/70 bg-white/75 p-6 shadow-2xl shadow-blue-200/60 backdrop-blur-xl">
+              <div className="mb-4 flex items-center gap-2 text-[#2563EB]">
+                <ShieldCheck className="h-4 w-4" />
+                <span className="text-sm font-medium">Secure team onboarding</span>
+              </div>
+              <div className="space-y-3">
+                <div className="rounded-2xl bg-[#EFF6FF] p-3 text-sm text-[#334155]">Identity verification ready</div>
+                <div className="rounded-2xl bg-[#EFF6FF] p-3 text-sm text-[#334155]">Role-based access in minutes</div>
+                <div className="rounded-2xl bg-[#EFF6FF] p-3 text-sm text-[#334155]">Private workspaces by default</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="w-full">
+          <div className="mx-auto w-full max-w-md rounded-[24px] border border-blue-100/70 bg-white/70 p-8 shadow-2xl shadow-blue-100/70 backdrop-blur-xl">
+            <h1 className="mb-2 text-3xl font-bold text-[#0F172A]">Create your account</h1>
+            <p className="mb-6 text-[#64748B]">Build your collaborative workspace in seconds.</p>
             {backendOk === false && (
               <p className="text-amber-600 text-sm mb-4 bg-amber-50 p-2 rounded">
                 Cannot reach backend. Start it with: <code className="bg-amber-100 px-1">cd backend && npm start</code>. Ensure MongoDB is running.
@@ -87,7 +109,7 @@ const RegisterPage = () => {
                       placeholder="Jane"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
-                      className="pl-10"
+                      className="h-11 rounded-xl border-blue-100 bg-white/80 pl-10 focus-visible:ring-[#2563EB]"
                       autoComplete="given-name"
                     />
                   </div>
@@ -102,7 +124,7 @@ const RegisterPage = () => {
                       placeholder="Doe"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
-                      className="pl-10"
+                      className="h-11 rounded-xl border-blue-100 bg-white/80 pl-10 focus-visible:ring-[#2563EB]"
                       autoComplete="family-name"
                     />
                   </div>
@@ -118,7 +140,7 @@ const RegisterPage = () => {
                     placeholder="you@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="pl-10"
+                    className="h-11 rounded-xl border-blue-100 bg-white/80 pl-10 focus-visible:ring-[#2563EB]"
                     autoComplete="email"
                   />
                 </div>
@@ -133,15 +155,24 @@ const RegisterPage = () => {
                     placeholder="At least 6 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10"
+                    className="h-11 rounded-xl border-blue-100 bg-white/80 pl-10 focus-visible:ring-[#2563EB]"
                     autoComplete="new-password"
                   />
+                </div>
+                <div className="mt-2">
+                  <div className="h-2 rounded-full bg-blue-100">
+                    <div
+                      className="h-2 rounded-full bg-gradient-to-r from-[#3B82F6] to-[#60A5FA] transition-all"
+                      style={{ width: `${passwordScore}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-[#64748B]">Password strength</p>
                 </div>
               </div>
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-[#6366F1] hover:bg-[#5558E3] text-white rounded-lg py-2"
+                className="h-11 w-full rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white shadow-lg shadow-blue-200/60 transition-all hover:-translate-y-0.5 hover:brightness-105"
                 aria-busy={loading}
               >
                 {loading ? 'Creating account...' : 'Create account'}
@@ -150,7 +181,7 @@ const RegisterPage = () => {
 
             <p className="mt-6 text-center text-sm text-[#64748B]">
               Already have an account?{' '}
-              <Link to="/login" className="text-[#6366F1] font-medium hover:underline">
+              <Link to="/login" className="font-medium text-[#2563EB] hover:underline">
                 Sign in
               </Link>
             </p>

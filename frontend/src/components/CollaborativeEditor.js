@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -20,6 +20,7 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
   const isRemoteUpdate = useRef(false);
   const typingTimeoutRef = useRef(null);
   const saveTimeoutRef = useRef(null);
+  const lastLoadedDocId = useRef(null);
 
   const socketRef = useRef(socket);
   const documentRef = useRef(document);
@@ -92,21 +93,25 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
     }, 1000);
   }, [saveDocument]);
 
-  const editor = useEditor({
-    immediatelyRender: true,
-    extensions: [
-      StarterKit,
-      Underline,
-      Placeholder.configure({
-        placeholder: 'Start typing your document...',
-      }),
-    ],
-    content: document.content || '',
-    editorProps: {
-      attributes: {
-        class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none max-w-none p-8',
-      },
+  const extensions = useMemo(() => [
+    StarterKit,
+    Underline,
+    Placeholder.configure({
+      placeholder: 'Start typing your document...',
+    }),
+  ], []);
+
+  const editorProps = useMemo(() => ({
+    attributes: {
+      class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none max-w-none p-8',
     },
+  }), []);
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions,
+    content: document.content || '',
+    editorProps,
     onUpdate: ({ editor }) => {
       if (!isRemoteUpdate.current) {
         handleContentChange(editor.getHTML());
@@ -114,14 +119,6 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
       }
     },
   });
-
-  useEffect(() => {
-    if (editor && document.content !== editor.getHTML()) {
-      isRemoteUpdate.current = true;
-      editor.commands.setContent(document.content || '', false);
-      isRemoteUpdate.current = false;
-    }
-  }, [document.document_id, editor]);
 
   useEffect(() => {
     if (!socket || !editor) return;
@@ -199,7 +196,7 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
   return (
     <div className="h-full flex flex-col">
       {/* Toolbar */}
-      <div className="glass sticky top-0 z-40 border-b border-[#E2E8F0] p-2 flex items-center gap-1 flex-wrap">
+      <div className="glass sticky top-0 z-40 border-b border-blue-100 bg-white/70 p-2 flex items-center gap-1 flex-wrap backdrop-blur-xl">
         <Button
           onClick={() => editor.chain().focus().toggleBold().run()}
           data-testid="editor-bold"
@@ -364,13 +361,15 @@ const CollaborativeEditor = ({ document, workspaceId, socket, currentUser, membe
       </div>
 
       {/* Editor */}
-      <div className="flex-1 overflow-y-auto bg-white">
+      <div className="flex-1 overflow-y-auto bg-gradient-to-b from-white to-[#F8FBFF]">
         <div className="max-w-4xl mx-auto">
           <div className="p-8">
-            <h1 className="text-4xl font-bold text-[#0F172A] mb-6 border-b-2 border-transparent focus:border-[#6366F1] outline-none pb-2">
+            <h1 className="mb-6 border-b-2 border-transparent pb-2 text-4xl font-bold text-[#0F172A] outline-none focus:border-[#2563EB]">
               {document.title}
             </h1>
-            <EditorContent editor={editor} />
+            <div className="rounded-3xl border border-blue-100 bg-white/85 shadow-lg shadow-blue-100/60 backdrop-blur-md">
+              <EditorContent editor={editor} />
+            </div>
           </div>
         </div>
       </div>

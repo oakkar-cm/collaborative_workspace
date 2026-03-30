@@ -8,10 +8,26 @@ import { Button } from './ui/button';
 const COLORS = ['#000000', '#FBBF24', '#F87171', '#60A5FA', '#34D399', '#A78BFA', '#F472B6'];
 const NOTE_COLORS = ['#FEF3C7', '#FEE2E2', '#DBEAFE', '#D1FAE5', '#E9D5FF', '#FCE7F3'];
 
+const PEN_TYPES = {
+  pencil:      { label: 'Pencil',      opacity: 0.75, widthMul: 1,   linecap: 'round' },
+  pen:         { label: 'Pen',         opacity: 1,    widthMul: 1,   linecap: 'round' },
+  softpen:     { label: 'Soft Pen',    opacity: 0.45, widthMul: 2.5, linecap: 'round' },
+  highlighter: { label: 'Highlighter', opacity: 0.3,  widthMul: 5,   linecap: 'square' },
+};
+
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
 const ZOOM_SENSITIVITY = 0.001;
 const DOT_SPACING = 24;
+
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
 
 function screenToWorld(screenX, screenY, pan, zoom) {
   return {
@@ -25,6 +41,8 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
 
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState('#000000');
+  const [penType, setPenType] = useState('pen');
+  const [penSize, setPenSize] = useState(3);
 
   const [stickyNotes, setStickyNotes] = useState([]);
   const [shapes, setShapes] = useState([]);
@@ -46,6 +64,11 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
   const [shapePreview, setShapePreview] = useState(null);
 
   const [editingTextId, setEditingTextId] = useState(null);
+  const [eraserSize, setEraserSize] = useState(20);
+  const [eraserPos, setEraserPos] = useState(null);
+  const isErasing = useRef(false);
+  const pathsRef = useRef(paths);
+  useEffect(() => { pathsRef.current = paths; }, [paths]);
 
   // ─── Socket handlers ────────────────────────────────────────────
   const handleWhiteboardInit = useCallback((data) => {
@@ -101,6 +124,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
       if (editingTextId) return;
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.target.closest && e.target.closest('[contenteditable="true"]')) return;
 
       if (e.code === 'Space' && !spaceHeld) {
         e.preventDefault();
@@ -204,7 +228,8 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
       setCurrentPath([{ x, y }]);
       setDrawing(pathId);
     } else if (tool === 'eraser') {
-      eraseAtPoint(x, y);
+      isErasing.current = true;
+      pathsRef.current = eraseAtPoint(x, y, pathsRef.current);
     } else if (tool === 'sticky') {
       addStickyNote(x, y);
       setTool('select');
@@ -228,6 +253,15 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
 
     const { x, y } = getWorldPos(e);
 
+    if (tool === 'eraser') {
+      const rect = containerRef.current.getBoundingClientRect();
+      setEraserPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      if (isErasing.current) {
+        pathsRef.current = eraseAtPoint(x, y, pathsRef.current);
+      }
+      return;
+    }
+
     if (dragging) {
       const updated = stickyNotes.map((n) =>
         n.id === dragging.id ? { ...n, x: x - dragging.ox, y: y - dragging.oy } : n
@@ -248,6 +282,10 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
 
   // ─── Mouse up ──────────────────────────────────────────────────────
   const handleMouseUp = () => {
+    if (isErasing.current) {
+      isErasing.current = false;
+    }
+
     if (isPanning) {
       setIsPanning(false);
       setPanStart(null);
@@ -261,7 +299,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     }
 
     if (drawing && currentPath.length > 1) {
-      const newPath = { id: typeof drawing === 'string' ? drawing : `path_${Date.now()}`, points: currentPath, color };
+      const newPath = { id: typeof drawing === 'string' ? drawing : `path_${Date.now()}`, points: currentPath, color, penType, strokeWidth: penSize };
       const updated = [...paths, newPath];
       setPaths(updated);
       broadcastUpdate('path', { paths: updated });
@@ -341,16 +379,49 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     updateStickyNote(id, { color: next });
   };
 
-  const eraseAtPoint = (wx, wy) => {
-    const hitRadius = 12 / zoom;
-    const updated = paths.filter((p) => {
-      return !p.points.some((pt) => Math.hypot(pt.x - wx, pt.y - wy) < hitRadius);
-    });
-    if (updated.length !== paths.length) {
-      setPaths(updated);
-      broadcastUpdate('path', { paths: updated });
+  const eraseAtPoint = useCallback((wx, wy, currentPaths) => {
+    const hitRadius = eraserSize / zoom;
+    let changed = false;
+    const result = [];
+
+    for (const p of currentPaths) {
+      const pts = p.points;
+      if (pts.length < 2) { result.push(p); continue; }
+
+      const segHit = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        segHit.push(distToSegment(wx, wy, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < hitRadius);
+      }
+
+      if (!segHit.includes(true)) {
+        result.push(p);
+        continue;
+      }
+
+      changed = true;
+      let segment = [pts[0]];
+      for (let i = 0; i < segHit.length; i++) {
+        if (segHit[i]) {
+          if (segment.length >= 2) {
+            result.push({ ...p, id: `${p.id}_s${Date.now()}_${Math.random()}`, points: [...segment] });
+          }
+          segment = [];
+        } else {
+          if (segment.length === 0) segment.push(pts[i]);
+          segment.push(pts[i + 1]);
+        }
+      }
+      if (segment.length >= 2) {
+        result.push({ ...p, id: `${p.id}_s${Date.now()}_${Math.random()}`, points: [...segment] });
+      }
     }
-  };
+
+    if (changed) {
+      setPaths(result);
+      broadcastUpdate('path', { paths: result });
+    }
+    return changed ? result : currentPaths;
+  }, [eraserSize, zoom, broadcastUpdate]);
 
   // ─── Sticky drag ──────────────────────────────────────────────────
   const handleStickyMouseDown = (e, noteId) => {
@@ -384,7 +455,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
   const getCursor = () => {
     if (spaceHeld || tool === 'hand') return isPanning ? 'grabbing' : 'grab';
     if (tool === 'draw') return 'crosshair';
-    if (tool === 'eraser') return 'crosshair';
+    if (tool === 'eraser') return 'none';
     if (tool === 'rectangle' || tool === 'circle') return 'crosshair';
     if (tool === 'text') return 'text';
     if (tool === 'sticky') return 'copy';
@@ -413,7 +484,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={() => { handleMouseUp(); setEraserPos(null); }}
       tabIndex={0}
     >
       {/* ─── Transformed world layer ──────────────────────────── */}
@@ -441,28 +512,38 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
           }}
           viewBox="-10000 -10000 20000 20000"
         >
-          {paths.map((p) => (
-            <polyline
-              key={p.id}
-              points={p.points.map((pt) => `${pt.x},${pt.y}`).join(' ')}
-              fill="none"
-              stroke={p.color || '#000'}
-              strokeWidth={2.5 / zoom}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ pointerEvents: tool === 'eraser' ? 'stroke' : 'none' }}
-            />
-          ))}
-          {currentPath.length > 1 && (
-            <polyline
-              points={currentPath.map((pt) => `${pt.x},${pt.y}`).join(' ')}
-              fill="none"
-              stroke={color}
-              strokeWidth={2.5 / zoom}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          )}
+          {paths.map((p) => {
+            const pt = PEN_TYPES[p.penType] || PEN_TYPES.pen;
+            const sw = ((p.strokeWidth || 2.5) * pt.widthMul) / zoom;
+            return (
+              <polyline
+                key={p.id}
+                points={p.points.map((pt) => `${pt.x},${pt.y}`).join(' ')}
+                fill="none"
+                stroke={p.color || '#000'}
+                strokeWidth={sw}
+                strokeLinecap={pt.linecap}
+                strokeLinejoin="round"
+                opacity={pt.opacity}
+                style={{ pointerEvents: tool === 'eraser' ? 'stroke' : 'none' }}
+              />
+            );
+          })}
+          {currentPath.length > 1 && (() => {
+            const activePt = PEN_TYPES[penType] || PEN_TYPES.pen;
+            const activeSw = (penSize * activePt.widthMul) / zoom;
+            return (
+              <polyline
+                points={currentPath.map((pt) => `${pt.x},${pt.y}`).join(' ')}
+                fill="none"
+                stroke={color}
+                strokeWidth={activeSw}
+                strokeLinecap={activePt.linecap}
+                strokeLinejoin="round"
+                opacity={activePt.opacity}
+              />
+            );
+          })()}
 
           {shapes.map((s) =>
             s.type === 'rectangle' ? (
@@ -678,6 +759,61 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
           )
         )}
 
+        {tool === 'eraser' && (
+          <>
+            <div className="w-px h-7 bg-[#E2E8F0] mx-1" />
+            <div className="flex items-center gap-1.5 px-1">
+              <Eraser className="w-3 h-3 text-[#94A3B8]" />
+              <input
+                type="range"
+                min={5}
+                max={60}
+                value={eraserSize}
+                onChange={(e) => setEraserSize(Number(e.target.value))}
+                className="w-20 h-1 accent-[#6366F1] cursor-pointer"
+                title={`Eraser size: ${eraserSize}px`}
+              />
+              <span className="text-[10px] font-medium text-[#64748B] min-w-[20px] text-center">{eraserSize}</span>
+            </div>
+          </>
+        )}
+
+        {tool === 'draw' && (
+          <>
+            <div className="w-px h-7 bg-[#E2E8F0] mx-1" />
+            <div className="flex items-center gap-1 px-1">
+              {Object.entries(PEN_TYPES).map(([key, pt]) => (
+                <button
+                  key={key}
+                  onClick={() => setPenType(key)}
+                  className={`h-7 px-2 rounded-md text-[10px] font-medium transition-all ${
+                    penType === key
+                      ? 'bg-[#6366F1] text-white'
+                      : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
+                  }`}
+                  title={pt.label}
+                >
+                  {pt.label}
+                </button>
+              ))}
+            </div>
+            <div className="w-px h-7 bg-[#E2E8F0] mx-1" />
+            <div className="flex items-center gap-1.5 px-1">
+              <Pencil className="w-3 h-3 text-[#94A3B8]" />
+              <input
+                type="range"
+                min={1}
+                max={20}
+                value={penSize}
+                onChange={(e) => setPenSize(Number(e.target.value))}
+                className="w-20 h-1 accent-[#6366F1] cursor-pointer"
+                title={`Pen size: ${penSize}px`}
+              />
+              <span className="text-[10px] font-medium text-[#64748B] min-w-[20px] text-center">{penSize}</span>
+            </div>
+          </>
+        )}
+
         <div className="w-px h-7 bg-[#E2E8F0] mx-1" />
 
         {/* Color picker */}
@@ -774,6 +910,20 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
           <Maximize2 className="w-3.5 h-3.5" />
         </Button>
       </div>
+
+      {/* Eraser cursor circle */}
+      {tool === 'eraser' && eraserPos && (
+        <div
+          className="pointer-events-none absolute rounded-full border-2 border-[#6366F1]/60 bg-[#6366F1]/10"
+          style={{
+            width: eraserSize * 2,
+            height: eraserSize * 2,
+            left: eraserPos.x - eraserSize,
+            top: eraserPos.y - eraserSize,
+            zIndex: 9999,
+          }}
+        />
+      )}
     </div>
   );
 };
