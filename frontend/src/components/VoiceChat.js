@@ -16,6 +16,12 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
   const analyserRef = useRef(null);
   const remoteAudiosRef = useRef({});
   const currentUserId = String(currentUser?.user_id || currentUser?.userId || '');
+  const shouldInitiateOffer = (peerId) => {
+    const self = String(currentUserId || '');
+    const peer = String(peerId || '');
+    if (!self || !peer) return false;
+    return self < peer;
+  };
 
   const iceServers = {
     iceServers: [
@@ -96,7 +102,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
     });
 
     // Create offer for new user IMMEDIATELY
-    if (isInCall && localStreamRef.current) {
+    if (isInCall && localStreamRef.current && shouldInitiateOffer(normalizedUserId)) {
       console.log('📞 Creating peer connection and offer for new user:', userId);
       await createPeerConnection(normalizedUserId);
       await createOffer(normalizedUserId);
@@ -177,7 +183,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
     if (isInCall && localStreamRef.current) {
       console.log('🔗 Connecting to existing participants:', others.length);
       others.forEach(async (participant) => {
-        if (!peerConnectionsRef.current[participant.userId]) {
+        if (!peerConnectionsRef.current[participant.userId] && shouldInitiateOffer(participant.userId)) {
           console.log('📞 Creating connection to existing user:', participant.userName);
           await createPeerConnection(participant.userId);
           await createOffer(participant.userId);
