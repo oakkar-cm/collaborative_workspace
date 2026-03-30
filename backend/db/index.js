@@ -1,6 +1,9 @@
+const dns = require("dns");
 const mongoose = require("mongoose");
 const config = require("../config");
 const logger = require("../utils/logger");
+
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 async function connect() {
   try {
