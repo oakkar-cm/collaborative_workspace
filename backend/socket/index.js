@@ -101,24 +101,30 @@ function initializeSocket(io) {
 
     // ── Voice chat signaling ────────────────────────────────────
 
-    socket.on("voice_join", ({ workspaceId, userId, userName }) => {
+    socket.on("voice_join", ({ workspaceId, userName }) => {
       if (!workspaceId) return;
+
+      const resolvedUserId = String(socket.user?.userId || socket.id);
+      const resolvedUserName = (userName || socket.user?.email || "User").trim();
 
       socket.join(workspaceId);
       socket.voiceRoom = workspaceId;
-      socket.voiceUserId = userId;
-      socket.voiceUserName = userName;
+      socket.voiceUserId = resolvedUserId;
+      socket.voiceUserName = resolvedUserName;
 
       if (!voiceParticipants.has(workspaceId)) {
         voiceParticipants.set(workspaceId, new Map());
       }
-      voiceParticipants.get(workspaceId).set(userId, {
-        userId,
-        userName,
+      voiceParticipants.get(workspaceId).set(resolvedUserId, {
+        userId: resolvedUserId,
+        userName: resolvedUserName,
         socketId: socket.id
       });
 
-      socket.to(workspaceId).emit("voice:user-joined", { userId, userName });
+      socket.to(workspaceId).emit("voice:user-joined", {
+        userId: resolvedUserId,
+        userName: resolvedUserName
+      });
 
       const participants = Array.from(voiceParticipants.get(workspaceId).values())
         .map((p) => ({ userId: p.userId, userName: p.userName }));
@@ -126,17 +132,19 @@ function initializeSocket(io) {
     });
 
     socket.on("voice_leave", ({ workspaceId, userId }) => {
-      if (!workspaceId) return;
+      const resolvedWorkspaceId = workspaceId || socket.voiceRoom;
+      const resolvedUserId = String(userId || socket.voiceUserId || socket.user?.userId || socket.id);
+      if (!resolvedWorkspaceId) return;
 
-      if (voiceParticipants.has(workspaceId)) {
-        voiceParticipants.get(workspaceId).delete(userId);
-        if (voiceParticipants.get(workspaceId).size === 0) {
-          voiceParticipants.delete(workspaceId);
+      if (voiceParticipants.has(resolvedWorkspaceId)) {
+        voiceParticipants.get(resolvedWorkspaceId).delete(resolvedUserId);
+        if (voiceParticipants.get(resolvedWorkspaceId).size === 0) {
+          voiceParticipants.delete(resolvedWorkspaceId);
         }
       }
 
-      socket.to(workspaceId).emit("voice:user-left", {
-        userId,
+      socket.to(resolvedWorkspaceId).emit("voice:user-left", {
+        userId: resolvedUserId,
         userName: socket.voiceUserName || "Unknown"
       });
 
@@ -147,22 +155,25 @@ function initializeSocket(io) {
 
     socket.on("voice_offer", ({ to, offer, workspaceId, from }) => {
       const room = voiceParticipants.get(workspaceId);
-      if (room && room.has(to)) {
-        io.to(room.get(to).socketId).emit("voice:offer", { from, offer });
+      const toKey = String(to);
+      if (room && room.has(toKey)) {
+        io.to(room.get(toKey).socketId).emit("voice:offer", { from, offer });
       }
     });
 
     socket.on("voice_answer", ({ to, answer, workspaceId, from }) => {
       const room = voiceParticipants.get(workspaceId);
-      if (room && room.has(to)) {
-        io.to(room.get(to).socketId).emit("voice:answer", { from, answer });
+      const toKey = String(to);
+      if (room && room.has(toKey)) {
+        io.to(room.get(toKey).socketId).emit("voice:answer", { from, answer });
       }
     });
 
     socket.on("voice_ice_candidate", ({ to, candidate, workspaceId, from }) => {
       const room = voiceParticipants.get(workspaceId);
-      if (room && room.has(to)) {
-        io.to(room.get(to).socketId).emit("voice:ice-candidate", { from, candidate });
+      const toKey = String(to);
+      if (room && room.has(toKey)) {
+        io.to(room.get(toKey).socketId).emit("voice:ice-candidate", { from, candidate });
       }
     });
 

@@ -15,6 +15,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const remoteAudiosRef = useRef({});
+  const currentUserId = String(currentUser?.user_id || currentUser?.userId || '');
 
   const iceServers = {
     iceServers: [
@@ -84,24 +85,29 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
   }, [socket, currentUser, isInCall]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUserJoined = async ({ userId, userName }) => {
-    if (userId === currentUser.user_id) return;
+    const normalizedUserId = String(userId);
+    if (normalizedUserId === currentUserId) return;
     
     console.log('🔵 New user joined voice chat:', userName, userId);
     toast.success(`${userName} joined the call`);
-    setActiveParticipants(prev => [...prev, { userId, userName }]);
+    setActiveParticipants(prev => {
+      if (prev.some((p) => String(p.userId) === normalizedUserId)) return prev;
+      return [...prev, { userId: normalizedUserId, userName }];
+    });
 
     // Create offer for new user IMMEDIATELY
     if (isInCall && localStreamRef.current) {
       console.log('📞 Creating peer connection and offer for new user:', userId);
-      await createPeerConnection(userId);
-      await createOffer(userId);
+      await createPeerConnection(normalizedUserId);
+      await createOffer(normalizedUserId);
     }
   };
 
   const handleUserLeft = ({ userId, userName }) => {
+    const normalizedUserId = String(userId);
     toast.info(`${userName} left the call`);
-    setActiveParticipants(prev => prev.filter(p => p.userId !== userId));
-    closePeerConnection(userId);
+    setActiveParticipants(prev => prev.filter(p => String(p.userId) !== normalizedUserId));
+    closePeerConnection(normalizedUserId);
   };
 
   const handleOffer = async ({ from, offer }) => {
@@ -121,7 +127,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
         to: from,
         answer,
         workspaceId,
-        from: currentUser.user_id
+        from: currentUserId
       });
       console.log('Answer sent to:', from);
     } catch (err) {
@@ -162,7 +168,9 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
 
   const handleParticipantsUpdate = ({ participants }) => {
     console.log('📋 Received participants list:', participants);
-    const others = participants.filter(p => p.userId !== currentUser.user_id);
+    const others = participants
+      .map((p) => ({ ...p, userId: String(p.userId) }))
+      .filter((p) => p.userId !== currentUserId);
     setActiveParticipants(others);
     
     // Connect to all existing participants
@@ -228,7 +236,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
           to: userId,
           candidate: event.candidate,
           workspaceId,
-          from: currentUser.user_id
+          from: currentUserId
         });
       } else {
         console.log('All ICE candidates sent for user:', userId);
@@ -305,7 +313,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
         to: userId,
         offer,
         workspaceId,
-        from: currentUser.user_id
+        from: currentUserId
       });
     } catch (err) {
       console.error('Error creating offer:', err);
@@ -391,7 +399,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
       console.log('📡 Emitting voice_join to workspace:', workspaceId);
       socket.emit('voice_join', {
         workspaceId,
-        userId: currentUser.user_id,
+        userId: currentUserId,
         userName: currentUser.name
       });
 
@@ -423,7 +431,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
     if (socket?.connected) {
       socket.emit('voice_leave', {
         workspaceId,
-        userId: currentUser.user_id
+        userId: currentUserId
       });
     }
 
@@ -442,7 +450,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
       if (socket?.connected) {
         socket.emit('voice_mute_status', {
           workspaceId,
-          userId: currentUser.user_id,
+          userId: currentUserId,
           isMuted: !audioTrack.enabled
         });
       }
