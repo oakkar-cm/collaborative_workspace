@@ -60,7 +60,7 @@ const WorkspacePage = () => {
         socketRef.current.disconnect();
       }
     };
-  }, [workspaceId]);
+  }, [workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadInitialData = async () => {
     try {

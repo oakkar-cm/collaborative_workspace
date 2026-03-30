@@ -81,7 +81,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
         endCall();
       }
     };
-  }, [socket, currentUser, isInCall]);
+  }, [socket, currentUser, isInCall]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUserJoined = async ({ userId, userName }) => {
     if (userId === currentUser.user_id) return;
