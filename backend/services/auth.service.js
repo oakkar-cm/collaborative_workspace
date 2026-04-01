@@ -81,7 +81,7 @@ async function exchangeSession(sessionId) {
   }
   activeSessions.delete(sessionId);
 
-  const user = await User.findById(session.userId).select("email firstName lastName").lean();
+  const user = await User.findById(session.userId).select("email firstName lastName avatar_url").lean();
   if (!user) {
     const err = new Error("User not found");
     err.statusCode = 404;
@@ -99,7 +99,10 @@ async function exchangeSession(sessionId) {
     user: {
       user_id: user._id,
       email: user.email,
-      name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
+      first_name: user.firstName || "",
+      last_name: user.lastName || "",
+      name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+      avatar_url: user.avatar_url || ""
     }
   };
 }

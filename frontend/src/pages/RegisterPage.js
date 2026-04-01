@@ -92,8 +92,8 @@ const RegisterPage = () => {
             <h1 className="mb-2 text-3xl font-bold text-[#0F172A]">Create your account</h1>
             <p className="mb-6 text-[#64748B]">Build your collaborative workspace in seconds.</p>
             {backendOk === false && (
-              <p className="text-amber-600 text-sm mb-4 bg-amber-50 p-2 rounded">
-                Cannot reach backend. Start it with: <code className="bg-amber-100 px-1">cd backend && npm start</code>. Ensure MongoDB is running.
+              <p className="mb-4 rounded bg-[#EFF6FF] p-2 text-sm text-[#1D4ED8]">
+                Cannot reach backend. Start it with: <code className="bg-[#DBEAFE] px-1">cd backend && npm start</code>. Ensure MongoDB is running.
               </p>
             )}
 

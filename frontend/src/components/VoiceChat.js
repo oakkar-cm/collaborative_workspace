@@ -1,9 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX, Users } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
+import client from '../api/client';
 
-const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
+const DEFAULT_ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ],
+  iceCandidatePoolSize: 10
+};
+
+const VoiceChat = ({ socket, workspaceId, currentUser }) => {
   const [isInCall, setIsInCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
@@ -12,380 +21,304 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
 
   const localStreamRef = useRef(null);
   const peerConnectionsRef = useRef({});
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
   const remoteAudiosRef = useRef({});
+  const audioMonitorsRef = useRef({});
+  const iceConfigRef = useRef(DEFAULT_ICE_CONFIG);
+  const isInCallRef = useRef(false);
+  const endingCallRef = useRef(false);
+
   const currentUserId = String(currentUser?.user_id || currentUser?.userId || '');
-  const shouldInitiateOffer = (peerId) => {
+
+  useEffect(() => {
+    isInCallRef.current = isInCall;
+  }, [isInCall]);
+
+  const shouldInitiateOffer = useCallback((peerId) => {
     const self = String(currentUserId || '');
     const peer = String(peerId || '');
     if (!self || !peer) return false;
     return self < peer;
-  };
+  }, [currentUserId]);
 
-  const iceServers = {
-    iceServers: [
-      // STUN servers for NAT traversal
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
-      
-      // FREE TURN servers for relay (global connectivity)
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      // Backup TURN server
-      {
-        urls: 'turn:relay.metered.ca:80',
-        username: 'e46a6190c9c8f90d506da0a8',
-        credential: 'QE3WBZPFVH7FKz9W'
-      },
-      {
-        urls: 'turn:relay.metered.ca:443',
-        username: 'e46a6190c9c8f90d506da0a8',
-        credential: 'QE3WBZPFVH7FKz9W'
-      }
-    ],
-    iceCandidatePoolSize: 10,
-    iceTransportPolicy: 'all' // Use TURN even if STUN works
-  };
-
-  useEffect(() => {
-    if (!socket) return;
-
-    // Voice chat signaling events
-    socket.on('voice:user-joined', handleUserJoined);
-    socket.on('voice:user-left', handleUserLeft);
-    socket.on('voice:offer', handleOffer);
-    socket.on('voice:answer', handleAnswer);
-    socket.on('voice:ice-candidate', handleIceCandidate);
-    socket.on('voice:participants', handleParticipantsUpdate);
-
-    return () => {
-      socket.off('voice:user-joined', handleUserJoined);
-      socket.off('voice:user-left', handleUserLeft);
-      socket.off('voice:offer', handleOffer);
-      socket.off('voice:answer', handleAnswer);
-      socket.off('voice:ice-candidate', handleIceCandidate);
-      socket.off('voice:participants', handleParticipantsUpdate);
-      
-      // Cleanup on unmount
-      if (isInCall) {
-        endCall();
-      }
-    };
-  }, [socket, currentUser, isInCall]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleUserJoined = async ({ userId, userName }) => {
-    const normalizedUserId = String(userId);
-    if (normalizedUserId === currentUserId) return;
-    
-    console.log('🔵 New user joined voice chat:', userName, userId);
-    toast.success(`${userName} joined the call`);
-    setActiveParticipants(prev => {
-      if (prev.some((p) => String(p.userId) === normalizedUserId)) return prev;
-      return [...prev, { userId: normalizedUserId, userName }];
-    });
-
-    // Create offer for new user IMMEDIATELY
-    if (isInCall && localStreamRef.current && shouldInitiateOffer(normalizedUserId)) {
-      console.log('📞 Creating peer connection and offer for new user:', userId);
-      await createPeerConnection(normalizedUserId);
-      await createOffer(normalizedUserId);
-    }
-  };
-
-  const handleUserLeft = ({ userId, userName }) => {
-    const normalizedUserId = String(userId);
-    toast.info(`${userName} left the call`);
-    setActiveParticipants(prev => prev.filter(p => String(p.userId) !== normalizedUserId));
-    closePeerConnection(normalizedUserId);
-  };
-
-  const handleOffer = async ({ from, offer }) => {
-    console.log('Received offer from:', from);
-    await createPeerConnection(from);
-    const pc = peerConnectionsRef.current[from];
-    
+  const cleanupAudioMonitor = useCallback((userId) => {
+    const monitor = audioMonitorsRef.current[userId];
+    if (!monitor) return;
+    if (monitor.rafId) cancelAnimationFrame(monitor.rafId);
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      console.log('Remote description set for:', from);
-      
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      console.log('Created and set local answer for:', from);
-
-      socket.emit('voice_answer', {
-        to: from,
-        answer,
-        workspaceId,
-        from: currentUserId
-      });
-      console.log('Answer sent to:', from);
-    } catch (err) {
-      console.error('Error handling offer:', err);
-      toast.error('Failed to establish voice connection');
+      monitor.source?.disconnect();
+    } catch (_) {
+      // no-op
     }
-  };
+    if (monitor.audioContext && monitor.audioContext.state !== 'closed') {
+      monitor.audioContext.close().catch(() => {});
+    }
+    delete audioMonitorsRef.current[userId];
+    setSpeakingUsers((prev) => {
+      const next = new Set(prev);
+      next.delete(userId);
+      return next;
+    });
+  }, []);
 
-  const handleAnswer = async ({ from, answer }) => {
-    console.log('Received answer from:', from);
-    const pc = peerConnectionsRef.current[from];
+  const closePeerConnection = useCallback((userId) => {
+    const normalizedUserId = String(userId);
+    const pc = peerConnectionsRef.current[normalizedUserId];
     if (pc) {
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        console.log('Remote description set from answer for:', from);
-      } catch (err) {
-        console.error('Error setting remote description from answer:', err);
-      }
-    } else {
-      console.warn('No peer connection found for answer from:', from);
+      pc.ontrack = null;
+      pc.onicecandidate = null;
+      pc.onconnectionstatechange = null;
+      pc.close();
+      delete peerConnectionsRef.current[normalizedUserId];
     }
-  };
 
-  const handleIceCandidate = async ({ from, candidate }) => {
-    console.log('Received ICE candidate from:', from);
-    const pc = peerConnectionsRef.current[from];
-    if (pc && candidate) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        console.log('ICE candidate added successfully for:', from);
-      } catch (err) {
-        console.error('Error adding ICE candidate:', err);
-      }
-    } else {
-      console.warn('No peer connection found for ICE candidate from:', from);
+    const remoteAudio = remoteAudiosRef.current[normalizedUserId];
+    if (remoteAudio) {
+      remoteAudio.srcObject = null;
+      remoteAudio.remove();
+      delete remoteAudiosRef.current[normalizedUserId];
     }
-  };
 
-  const handleParticipantsUpdate = ({ participants }) => {
-    console.log('📋 Received participants list:', participants);
-    const others = participants
-      .map((p) => ({ ...p, userId: String(p.userId) }))
-      .filter((p) => p.userId !== currentUserId);
-    setActiveParticipants(others);
-    
-    // Connect to all existing participants
-    if (isInCall && localStreamRef.current) {
-      console.log('🔗 Connecting to existing participants:', others.length);
-      others.forEach(async (participant) => {
-        if (!peerConnectionsRef.current[participant.userId] && shouldInitiateOffer(participant.userId)) {
-          console.log('📞 Creating connection to existing user:', participant.userName);
-          await createPeerConnection(participant.userId);
-          await createOffer(participant.userId);
-        }
+    cleanupAudioMonitor(normalizedUserId);
+  }, [cleanupAudioMonitor]);
+
+  const monitorAudioLevel = useCallback((stream, userId) => {
+    const normalizedUserId = String(userId);
+    cleanupAudioMonitor(normalizedUserId);
+
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    const monitor = { audioContext, analyser, source, rafId: null };
+    audioMonitorsRef.current[normalizedUserId] = monitor;
+
+    const tick = () => {
+      const currentMonitor = audioMonitorsRef.current[normalizedUserId];
+      if (!currentMonitor || !peerConnectionsRef.current[normalizedUserId]) return;
+      currentMonitor.analyser.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      setSpeakingUsers((prev) => {
+        const next = new Set(prev);
+        if (average > 30) next.add(normalizedUserId);
+        else next.delete(normalizedUserId);
+        return next;
       });
-    }
-  };
+      currentMonitor.rafId = requestAnimationFrame(tick);
+    };
 
-  const createPeerConnection = async (userId) => {
-    if (peerConnectionsRef.current[userId]) return;
+    monitor.rafId = requestAnimationFrame(tick);
+  }, [cleanupAudioMonitor]);
 
-    console.log('Creating peer connection for user:', userId);
-    const pc = new RTCPeerConnection(iceServers);
-    peerConnectionsRef.current[userId] = pc;
+  const createPeerConnection = useCallback(async (userId) => {
+    const normalizedUserId = String(userId);
+    if (!normalizedUserId || peerConnectionsRef.current[normalizedUserId]) return;
 
-    // Add local audio track
+    const pc = new RTCPeerConnection(iceConfigRef.current || DEFAULT_ICE_CONFIG);
+    peerConnectionsRef.current[normalizedUserId] = pc;
+
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => {
+      localStreamRef.current.getTracks().forEach((track) => {
         pc.addTrack(track, localStreamRef.current);
-        console.log('Added local track to peer connection');
       });
     }
 
-    // Handle incoming audio
     pc.ontrack = (event) => {
-      console.log('Received remote track from user:', userId);
-      
-      // Create or get existing audio element
-      let remoteAudio = remoteAudiosRef.current[userId];
+      let remoteAudio = remoteAudiosRef.current[normalizedUserId];
       if (!remoteAudio) {
         remoteAudio = document.createElement('audio');
         remoteAudio.autoplay = true;
         remoteAudio.playsInline = true;
         document.body.appendChild(remoteAudio);
-        remoteAudiosRef.current[userId] = remoteAudio;
+        remoteAudiosRef.current[normalizedUserId] = remoteAudio;
       }
-      
       remoteAudio.srcObject = event.streams[0];
-      remoteAudio.volume = isSpeakerMuted ? 0 : 1.0;
-      
-      // Play audio (some browsers require user interaction)
-      remoteAudio.play().catch(err => {
-        console.error('Error playing audio:', err);
-        toast.error('Click to enable audio playback');
+      remoteAudio.volume = isSpeakerMuted ? 0 : 1;
+      remoteAudio.play().catch(() => {
+        toast.error('Click once to enable audio playback');
       });
-      
-      // Monitor audio levels for speaking indicator
-      monitorAudioLevel(event.streams[0], userId);
+      monitorAudioLevel(event.streams[0], normalizedUserId);
     };
 
-    // Handle ICE candidates
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('Sending ICE candidate to user:', userId);
+      if (event.candidate && socket?.connected) {
         socket.emit('voice_ice_candidate', {
-          to: userId,
+          to: normalizedUserId,
           candidate: event.candidate,
-          workspaceId,
-          from: currentUserId
+          workspaceId
         });
-      } else {
-        console.log('All ICE candidates sent for user:', userId);
-      }
-    };
-
-    pc.onicecandidateerror = (event) => {
-      console.error('ICE candidate error:', event);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state for ${userId}:`, pc.iceConnectionState);
-      if (pc.iceConnectionState === 'connected') {
-        console.log('✅ ICE connection established with:', userId);
-        
-        // Check if using TURN relay
-        pc.getStats().then(stats => {
-          stats.forEach(report => {
-            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-              const localCandidate = stats.get(report.localCandidateId);
-              const remoteCandidate = stats.get(report.remoteCandidateId);
-              
-              if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
-                console.log('🔄 Using TURN relay for:', userId);
-                toast.info('Connected via relay server (TURN)');
-              } else {
-                console.log('🔗 Direct P2P connection for:', userId);
-                toast.success('Direct connection established');
-              }
-            }
-          });
-        });
-      }
-      if (pc.iceConnectionState === 'failed') {
-        console.error('❌ ICE connection failed with:', userId);
-        toast.error(`Voice connection failed with ${userId}`);
-      }
-      if (pc.iceConnectionState === 'disconnected') {
-        console.warn('⚠️ ICE connection disconnected with:', userId);
-        // Try to reconnect
-        setTimeout(() => {
-          if (pc.iceConnectionState === 'disconnected') {
-            pc.restartIce();
-            console.log('Attempting ICE restart for:', userId);
-          }
-        }, 2000);
       }
     };
 
     pc.onconnectionstatechange = () => {
-      console.log(`Connection state for ${userId}:`, pc.connectionState);
-      if (pc.connectionState === 'connected') {
-        toast.success('Voice connection established');
-      }
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        closePeerConnection(userId);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+        closePeerConnection(normalizedUserId);
       }
     };
-  };
+  }, [closePeerConnection, isSpeakerMuted, monitorAudioLevel, socket, workspaceId]);
 
-  const createOffer = async (userId) => {
-    console.log('Creating offer for user:', userId);
-    const pc = peerConnectionsRef.current[userId];
-    
+  const createOffer = useCallback(async (userId) => {
+    const normalizedUserId = String(userId);
+    const pc = peerConnectionsRef.current[normalizedUserId];
+    if (!pc || !socket?.connected) return;
     try {
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: false
-      });
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await pc.setLocalDescription(offer);
-      console.log('Local description set, sending offer to:', userId);
-
       socket.emit('voice_offer', {
-        to: userId,
+        to: normalizedUserId,
         offer,
-        workspaceId,
-        from: currentUserId
+        workspaceId
       });
-    } catch (err) {
-      console.error('Error creating offer:', err);
+    } catch (_) {
+      toast.error('Failed to create call offer');
     }
-  };
+  }, [socket, workspaceId]);
 
-  const closePeerConnection = (userId) => {
-    const pc = peerConnectionsRef.current[userId];
-    if (pc) {
-      pc.close();
-      delete peerConnectionsRef.current[userId];
+  const endCall = useCallback((options = {}) => {
+    const { silent = false, emitLeave = true } = options;
+    if (endingCallRef.current) return;
+    if (!isInCallRef.current && !localStreamRef.current) return;
+    endingCallRef.current = true;
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
-    
-    // Clean up remote audio element
-    const remoteAudio = remoteAudiosRef.current[userId];
-    if (remoteAudio) {
-      remoteAudio.srcObject = null;
-      remoteAudio.remove();
-      delete remoteAudiosRef.current[userId];
+
+    Object.keys(peerConnectionsRef.current).forEach((userId) => {
+      closePeerConnection(userId);
+    });
+
+    Object.keys(audioMonitorsRef.current).forEach((userId) => {
+      cleanupAudioMonitor(userId);
+    });
+
+    if (emitLeave && socket?.connected) {
+      socket.emit('voice_leave', { workspaceId });
     }
-  };
 
-  const monitorAudioLevel = (stream, userId) => {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const analyser = audioContext.createAnalyser();
-    const source = audioContext.createMediaStreamSource(stream);
-    
-    analyser.fftSize = 512;
-    source.connect(analyser);
+    setIsInCall(false);
+    isInCallRef.current = false;
+    setIsMuted(false);
+    setActiveParticipants([]);
+    setSpeakingUsers(new Set());
+    if (!silent) toast.info('Left voice chat');
 
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    
-    const checkAudioLevel = () => {
-      analyser.getByteFrequencyData(dataArray);
-      const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-      
-      if (average > 30) {
-        setSpeakingUsers(prev => new Set([...prev, userId]));
-      } else {
-        setSpeakingUsers(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(userId);
-          return newSet;
+    endingCallRef.current = false;
+  }, [cleanupAudioMonitor, closePeerConnection, socket, workspaceId]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const onUserJoined = async ({ userId, userName }) => {
+      const normalizedUserId = String(userId);
+      if (!normalizedUserId || normalizedUserId === currentUserId) return;
+      setActiveParticipants((prev) => {
+        if (prev.some((p) => String(p.userId) === normalizedUserId)) return prev;
+        toast.success(`${userName || 'User'} joined the call`);
+        return [...prev, { userId: normalizedUserId, userName: userName || 'User' }];
+      });
+      if (isInCallRef.current && localStreamRef.current && shouldInitiateOffer(normalizedUserId)) {
+        await createPeerConnection(normalizedUserId);
+        await createOffer(normalizedUserId);
+      }
+    };
+
+    const onUserLeft = ({ userId, userName }) => {
+      const normalizedUserId = String(userId);
+      if (!normalizedUserId) return;
+      setActiveParticipants((prev) => prev.filter((p) => String(p.userId) !== normalizedUserId));
+      closePeerConnection(normalizedUserId);
+      toast.info(`${userName || 'User'} left the call`);
+    };
+
+    const onOffer = async ({ from, offer }) => {
+      const normalizedFrom = String(from);
+      if (!normalizedFrom || normalizedFrom === currentUserId) return;
+      await createPeerConnection(normalizedFrom);
+      const pc = peerConnectionsRef.current[normalizedFrom];
+      if (!pc) return;
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('voice_answer', { to: normalizedFrom, answer, workspaceId });
+      } catch (_) {
+        toast.error('Failed to answer call');
+      }
+    };
+
+    const onAnswer = async ({ from, answer }) => {
+      const normalizedFrom = String(from);
+      const pc = peerConnectionsRef.current[normalizedFrom];
+      if (!pc) return;
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      } catch (_) {
+        toast.error('Failed to sync call answer');
+      }
+    };
+
+    const onIceCandidate = async ({ from, candidate }) => {
+      const normalizedFrom = String(from);
+      const pc = peerConnectionsRef.current[normalizedFrom];
+      if (!pc || !candidate) return;
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (_) {
+        // ignore transient ICE errors
+      }
+    };
+
+    const onParticipants = ({ participants }) => {
+      const others = (participants || [])
+        .map((participant) => ({
+          userId: String(participant.userId),
+          userName: participant.userName || 'User'
+        }))
+        .filter((participant) => participant.userId !== currentUserId);
+      setActiveParticipants(others);
+      if (isInCallRef.current && localStreamRef.current) {
+        others.forEach(async (participant) => {
+          if (!peerConnectionsRef.current[participant.userId] && shouldInitiateOffer(participant.userId)) {
+            await createPeerConnection(participant.userId);
+            await createOffer(participant.userId);
+          }
         });
       }
-      
-      if (peerConnectionsRef.current[userId]) {
-        requestAnimationFrame(checkAudioLevel);
-      }
     };
-    
-    checkAudioLevel();
-  };
+
+    socket.on('voice:user-joined', onUserJoined);
+    socket.on('voice:user-left', onUserLeft);
+    socket.on('voice:offer', onOffer);
+    socket.on('voice:answer', onAnswer);
+    socket.on('voice:ice-candidate', onIceCandidate);
+    socket.on('voice:participants', onParticipants);
+
+    return () => {
+      socket.off('voice:user-joined', onUserJoined);
+      socket.off('voice:user-left', onUserLeft);
+      socket.off('voice:offer', onOffer);
+      socket.off('voice:answer', onAnswer);
+      socket.off('voice:ice-candidate', onIceCandidate);
+      socket.off('voice:participants', onParticipants);
+    };
+  }, [socket, currentUserId, createOffer, createPeerConnection, shouldInitiateOffer, closePeerConnection, workspaceId]);
+
+  useEffect(() => () => {
+    endCall({ silent: true, emitLeave: true });
+  }, [endCall]);
 
   const startCall = async () => {
-    try {
-      console.log('🎙️ Starting voice call...');
-      console.log('Socket connected:', socket?.connected);
-      console.log('Current user:', currentUser?.name, currentUser?.user_id);
-      
-      if (!socket || !socket.connected) {
-        toast.error('Not connected to server. Please refresh the page.');
-        return;
-      }
+    if (!socket || !socket.connected) {
+      toast.error('Not connected to server. Please refresh.');
+      return;
+    }
+    if (isInCallRef.current) return;
 
-      // Request microphone access with high-quality constraints
+    try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -397,84 +330,49 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
         video: false
       });
 
-      console.log('✅ Microphone access granted');
       localStreamRef.current = stream;
       setIsInCall(true);
+      isInCallRef.current = true;
 
-      // Notify others
-      console.log('📡 Emitting voice_join to workspace:', workspaceId);
-      socket.emit('voice_join', {
-        workspaceId,
-        userId: currentUserId,
-        userName: currentUser.name
-      });
-
-      toast.success('Joined voice chat - waiting for others...');
-    } catch (error) {
-      console.error('Failed to start call:', error);
-      if (error.name === 'NotAllowedError') {
-        toast.error('Microphone permission denied. Please allow microphone access.');
-      } else if (error.name === 'NotFoundError') {
-        toast.error('No microphone found. Please check your device.');
-      } else {
-        toast.error('Failed to access microphone: ' + error.message);
+      try {
+        const response = await client.get('/rtc/ice-config');
+        if (response?.data?.iceServers?.length) {
+          iceConfigRef.current = { ...DEFAULT_ICE_CONFIG, ...response.data };
+        }
+      } catch (_) {
+        iceConfigRef.current = DEFAULT_ICE_CONFIG;
       }
+
+      socket.emit('voice_join', { workspaceId });
+      toast.success('Joined voice chat');
+    } catch (error) {
+      if (error.name === 'NotAllowedError') toast.error('Microphone permission denied');
+      else if (error.name === 'NotFoundError') toast.error('No microphone detected');
+      else toast.error(error?.message || 'Failed to start voice chat');
     }
-  };
-
-  const endCall = () => {
-    // Stop local stream
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-
-    // Close all peer connections
-    Object.keys(peerConnectionsRef.current).forEach(userId => {
-      closePeerConnection(userId);
-    });
-
-    if (socket?.connected) {
-      socket.emit('voice_leave', {
-        workspaceId,
-        userId: currentUserId
-      });
-    }
-
-    setIsInCall(false);
-    setActiveParticipants([]);
-    setSpeakingUsers(new Set());
-    toast.info('Left voice chat');
   };
 
   const toggleMute = () => {
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      audioTrack.enabled = !audioTrack.enabled;
-      setIsMuted(!audioTrack.enabled);
-      
-      if (socket?.connected) {
-        socket.emit('voice_mute_status', {
-          workspaceId,
-          userId: currentUserId,
-          isMuted: !audioTrack.enabled
-        });
-      }
+    const track = localStreamRef.current?.getAudioTracks?.()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    const muted = !track.enabled;
+    setIsMuted(muted);
+    if (socket?.connected) {
+      socket.emit('voice_mute_status', { workspaceId, isMuted: muted });
     }
   };
 
   const toggleSpeaker = () => {
-    const newMutedState = !isSpeakerMuted;
-    setIsSpeakerMuted(newMutedState);
-    
-    // Update all remote audio elements
-    Object.values(remoteAudiosRef.current).forEach(audio => {
-      audio.volume = newMutedState ? 0 : 1.0;
+    const nextMuted = !isSpeakerMuted;
+    setIsSpeakerMuted(nextMuted);
+    Object.values(remoteAudiosRef.current).forEach((audio) => {
+      audio.volume = nextMuted ? 0 : 1;
     });
   };
 
   return (
-    <div className="border-t border-[#E2E8F0] p-4 bg-white">
+    <div className="glass-panel mx-4 mb-4 rounded-2xl border border-blue-100 p-4">
       {/* Voice Chat Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -485,8 +383,8 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
             Voice Chat {isInCall && `(${activeParticipants.length + 1})`}
           </span>
           {isInCall && (
-            <span className="text-xs bg-[#10B981]/10 text-[#10B981] px-2 py-1 rounded-full">
-              🌐 Global Ready
+            <span className="rounded-full bg-[#DBEAFE] px-2 py-1 text-xs text-[#1D4ED8]">
+              Global Ready
             </span>
           )}
         </div>
@@ -497,38 +395,6 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
           </div>
         )}
       </div>
-
-      {/* Connection Status Debug (only in dev) */}
-      {process.env.NODE_ENV === 'development' && isInCall && (
-        <div className="mb-3 text-xs text-[#64748B] bg-[#F8F9FA] p-2 rounded border border-[#E2E8F0]">
-          <div className="font-semibold mb-1">Debug Info:</div>
-          <div>Socket Connected: {socket?.connected ? '✅' : '❌'}</div>
-          <div>Local Stream: {localStreamRef.current ? '✅' : '❌'}</div>
-          <div>Peer Connections: {Object.keys(peerConnectionsRef.current).length}</div>
-          <div>Audio Elements: {Object.keys(remoteAudiosRef.current).length}</div>
-          <div>Active Participants: {activeParticipants.length}</div>
-          <button
-            onClick={() => {
-              console.log('=== VOICE CHAT DEBUG ===');
-              console.log('Socket:', socket);
-              console.log('Local Stream:', localStreamRef.current);
-              console.log('Peer Connections:', peerConnectionsRef.current);
-              console.log('Remote Audios:', remoteAudiosRef.current);
-              console.log('Active Participants:', activeParticipants);
-              Object.entries(peerConnectionsRef.current).forEach(([userId, pc]) => {
-                console.log(`Peer ${userId}:`, {
-                  connectionState: pc.connectionState,
-                  iceConnectionState: pc.iceConnectionState,
-                  signalingState: pc.signalingState
-                });
-              });
-            }}
-            className="mt-2 text-xs bg-[#6366F1] text-white px-2 py-1 rounded"
-          >
-            Log Full Debug Info
-          </button>
-        </div>
-      )}
 
       {/* Active Participants */}
       {isInCall && activeParticipants.length > 0 && (
@@ -558,23 +424,11 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
 
       {/* Voice Controls */}
       <div className="flex flex-col gap-3">
-        {!isInCall && (
-          <div className="text-xs text-[#64748B] bg-[#F8F9FA] p-3 rounded-lg border border-[#E2E8F0]">
-            <div className="flex items-start gap-2">
-              <span className="text-base">🌐</span>
-              <div>
-                <strong className="text-[#0F172A]">Global Voice Chat</strong>
-                <p className="mt-1">Works across different WiFi networks and countries. Using STUN + TURN servers for worldwide connectivity.</p>
-              </div>
-            </div>
-          </div>
-        )}
-        
         <div className="flex items-center gap-2">{!isInCall ? (
           <Button
             onClick={startCall}
             data-testid="start-voice-call"
-            className="flex-1 bg-[#10B981] hover:bg-[#059669] text-white rounded-full transition-all active:scale-95"
+            className="flex-1 rounded-full bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white transition-all active:scale-95 hover:brightness-105"
           >
             <Phone className="w-4 h-4 mr-2" />
             Join Voice Chat
@@ -604,7 +458,7 @@ const VoiceChat = ({ socket, workspaceId, currentUser, members }) => {
             </Button>
 
             <Button
-              onClick={endCall}
+              onClick={() => endCall({ silent: false, emitLeave: true })}
               data-testid="end-voice-call"
               variant="destructive"
               className="rounded-full transition-all active:scale-95"

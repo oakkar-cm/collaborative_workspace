@@ -1,3 +1,96 @@
+# Refactor Analysis
+
+## Scope
+
+This analysis summarizes the production-hardening refactor across backend, frontend, Socket.IO realtime flows, and WebRTC voice signaling, while preserving the existing architecture:
+
+- `routes -> controllers -> services -> models`
+
+## Key Improvements
+
+### 1) Security
+
+- Removed hardcoded TURN credentials from frontend.
+- Added authenticated ICE config endpoint:
+  - `GET /api/rtc/ice-config`
+- Added HttpOnly cookie auth support:
+  - secure cookie options, SameSite controls, logout cookie clear.
+- Hardened auth middleware to support secure cookie token extraction.
+- Prevented socket identity spoofing:
+  - server now derives identity from authenticated socket context.
+- Prevented arbitrary voice participant eviction:
+  - `voice_leave` no longer trusts client `userId`.
+- Added request protection middleware:
+  - `helmet`, `express-rate-limit`, `express-mongo-sanitize`, `hpp`.
+- Improved global error handling:
+  - safer status mapping and reduced internal leakage in production.
+
+### 2) Concurrency and Data Integrity
+
+- Poll update flows were refactored toward optimistic concurrency:
+  - vote and option update operations use version checks and retry loops.
+- Document updates support optimistic conflict behavior with versioning.
+- Workspace membership checks were enforced in service layer for core resources.
+
+### 3) Performance and Scalability
+
+- Added compression middleware.
+- Added MongoDB connection pool tuning.
+- Added pagination support for large list endpoints.
+- Added/expanded indexes for hot query paths.
+- Added route-level lazy loading for heavy frontend pages.
+- Reduced websocket abuse impact with throttling and authorization checks.
+
+### 4) Realtime + Voice Stabilization
+
+- Room authorization checks were improved with short-lived cache and forced revalidation on sensitive events.
+- Voice chat lifecycle was refactored to avoid duplicate teardown emissions.
+- Added cleanup for per-peer audio monitors:
+  - `requestAnimationFrame` cancellation
+  - `AudioContext` closure
+  - media node cleanup on disconnect/unmount.
+
+### 5) Memory Leak Mitigation
+
+- Added object URL revocation in file download flows.
+- Added explicit peer/audio cleanup in voice teardown paths.
+
+## Architectural Impact
+
+- No architecture migration performed.
+- Existing route/controller/service/model layering preserved.
+- Changes primarily improve implementation quality, safety, and runtime behavior.
+
+## Remaining Recommended Work
+
+- Add explicit automated tests for:
+  - concurrent poll voting/option creation
+  - socket auth revocation behavior after membership removal
+  - voice lifecycle events and reconnect edge cases
+- Add load/perf tests (k6/Artillery) with pass/fail thresholds (p95 latency, error rate).
+- Consider Redis-backed shared state for horizontal scale of realtime features.
+- Consider full migration to cookie-only auth (removing legacy bearer fallback once clients are fully migrated).
+
+## Regression Risk Summary
+
+- Medium risk areas:
+  - realtime voice signaling behavior under packet loss/reconnect
+  - concurrent poll edits in high-contention scenarios
+- Mitigation applied:
+  - defensive validation
+  - access checks
+  - optimistic conflict handling
+  - stricter socket authorization controls
+
+## Outcome
+
+The system is significantly closer to production-grade SaaS readiness in:
+
+- security posture
+- realtime trust boundaries
+- concurrent update behavior
+- performance under multi-user workloads
+- maintainability and operational reliability
 # Refactor Analysis: Collaborative Workspace
 
 ## 1. Current Repository Structure

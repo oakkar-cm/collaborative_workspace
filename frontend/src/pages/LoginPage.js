@@ -5,7 +5,7 @@ import { Zap, Mail, Lock, Sparkles } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { login, setToken } from '../api/endpoints/auth';
+import { login } from '../api/endpoints/auth';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -22,13 +22,8 @@ const LoginPage = () => {
     setLoading(true);
     try {
       const data = await login(email.trim(), password);
-      if (data.token) {
-        setToken(data.token);
-        toast.success(data.message || 'Login successful');
-        navigate('/dashboard', { replace: true });
-      } else {
-        toast.error('Invalid response from server');
-      }
+      toast.success(data.message || 'Login successful');
+      navigate('/dashboard', { replace: true });
     } catch (error) {
       const message = error.response?.data?.message
         || (error.response ? 'Login failed' : 'Cannot reach server. Is the backend running?');

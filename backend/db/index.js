@@ -1,9 +1,6 @@
-const dns = require("dns");
 const mongoose = require("mongoose");
 const config = require("../config");
 const logger = require("../utils/logger");
-
-dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 async function connect() {
   try {
@@ -17,7 +14,13 @@ async function connect() {
       }
     }
 
-    await mongoose.connect(uri, { dbName: "collab_workspace" });
+    await mongoose.connect(uri, {
+      dbName: "collab_workspace",
+      maxPoolSize: 50,
+      minPoolSize: 5,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000
+    });
     logger.info("MongoDB Connected to database: collab_workspace");
 
     require("../models/Document");
@@ -27,8 +30,10 @@ async function connect() {
     require("../models/User");
     require("../models/Workspace");
 
-    await mongoose.connection.syncIndexes();
-    logger.info("All collection indexes synced");
+    if (!config.isProduction || config.shouldSyncIndexes) {
+      await mongoose.connection.syncIndexes();
+      logger.info("All collection indexes synced");
+    }
   } catch (err) {
     logger.error("DB ERROR:", err);
     throw err;

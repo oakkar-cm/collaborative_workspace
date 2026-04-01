@@ -22,11 +22,11 @@ async function upload(req, res, next) {
 
 async function list(req, res, next) {
   try {
-    const { workspace_id } = req.query;
+    const { workspace_id, page, limit } = req.query;
     if (!workspace_id) {
       return res.status(400).json({ message: "workspace_id query param required" });
     }
-    const files = await fileService.listByWorkspace(workspace_id);
+    const files = await fileService.listByWorkspace(workspace_id, req.user.userId, { page, limit });
     res.json(files);
   } catch (err) {
     next(err);
@@ -35,21 +35,45 @@ async function list(req, res, next) {
 
 async function download(req, res, next) {
   try {
-    const file = await fileService.download(req.params.id);
-    res.set({
-      "Content-Type": file.mimetype || "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${file.filename}"`,
-      "Content-Length": file.data.length
-    });
-    res.send(file.data);
+    const file = await fileService.download(req.params.id, req.user.userId);
+    const data = toBuffer(file?.data);
+
+    // Avoid invalid Content-Length values. Express will set it automatically
+    // for Buffers/typed arrays when we omit the header.
+    const contentLength = data.length;
+
+    const headers = {
+      "Content-Type": file?.mimetype || "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${file?.filename || "file"}"`
+    };
+
+    if (Number.isFinite(contentLength)) {
+      headers["Content-Length"] = String(contentLength);
+    }
+
+    res.set(headers);
+    res.send(data);
   } catch (err) {
     next(err);
   }
 }
 
+function toBuffer(rawData) {
+  if (Buffer.isBuffer(rawData)) return rawData;
+  if (rawData?.type === "Buffer" && Array.isArray(rawData.data)) {
+    return Buffer.from(rawData.data);
+  }
+  if (rawData?.buffer) {
+    return Buffer.from(rawData.buffer);
+  }
+  const err = new Error("File data is invalid");
+  err.statusCode = 500;
+  throw err;
+}
+
 async function remove(req, res, next) {
   try {
-    const file = await fileService.remove(req.params.id);
+    const file = await fileService.remove(req.params.id, req.user.userId);
 
     const io = req.app.get("io");
     if (io) io.to(String(file.workspace_id)).emit("file_deleted", { file_id: file.file_id, user_id: req.user.userId });

@@ -1,13 +1,11 @@
-const TOKEN_KEY = 'synapse_token';
-
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return 'cookie-session';
 }
 
 export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
+  return token;
 }
 
 export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+  return true;
 }

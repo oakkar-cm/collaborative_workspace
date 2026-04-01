@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
-import { setToken } from '../api/authStorage';
 import { toast } from 'sonner';
 
 const AuthCallback = () => {
@@ -28,10 +27,7 @@ const AuthCallback = () => {
           session_id: sessionId
         });
 
-        const { token, user } = response.data;
-        if (token) {
-          setToken(token);
-        }
+        const { user } = response.data;
 
         toast.success(`Welcome, ${user?.name || 'back'}!`);
         navigate('/dashboard', { replace: true });

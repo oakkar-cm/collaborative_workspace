@@ -7,4 +7,7 @@ const documentSchema = new mongoose.Schema({
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
 }, { timestamps: true, collection: "documents" });
 
+documentSchema.index({ workspace_id: 1, updatedAt: -1 });
+documentSchema.index({ workspace_id: 1, createdAt: -1 });
+
 module.exports = mongoose.model("Document", documentSchema);

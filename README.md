@@ -1,95 +1,126 @@
 # Collaborative Workspace
 
-Real-time collaborative workspace for teams — edit documents, manage tasks, chat, share files, and whiteboard together.
+A real-time team collaboration platform with shared documents, tasks, chat, whiteboard, file sharing, and voice chat.
+
+## Current Status
+
+This repository includes a production-hardening refactor focused on:
+
+- secure authentication and API access
+- workspace-level authorization
+- safer realtime signaling and room access
+- improved concurrency handling for poll updates
+- performance/scalability middleware and query/index improvements
+
+See `REFACTOR_ANALYSIS.md` for a full technical breakdown.
 
 ## Tech Stack
 
-**Frontend:** React 19, TipTap 3, Tailwind CSS, Radix UI, Socket.IO Client  
-**Backend:** Node.js, Express 5, Mongoose, Socket.IO, JWT  
-**Database:** MongoDB Atlas
+- Frontend: React 19, Tailwind CSS, Radix UI, Socket.IO Client, WebRTC
+- Backend: Node.js, Express 5, Mongoose, Socket.IO
+- Database: MongoDB
+
+## Architecture
+
+The application keeps the MVC-style flow:
+
+- `routes` -> `controllers` -> `services` -> `models`
+
+This structure is preserved while applying security and performance improvements.
 
 ## Setup
 
-### Backend
+### 1) Backend
 
 ```bash
 cd backend
 npm install
-cp .env.example .env   # then fill in your MongoDB URI and JWT secret
+cp .env.example .env
 npm start
 ```
 
-### Frontend
+Required backend settings (minimum):
+
+- `MONGODB_URI`
+- `JWT_SECRET` (>= 32 chars in production)
+- `CLIENT_URL`
+- `CORS_ORIGINS`
+
+Optional realtime voice relay settings:
+
+- `TURN_SHARED_SECRET`
+- `TURN_URLS`
+- `TURN_CREDENTIAL_TTL_SECONDS`
+- `STUN_URLS`
+
+### 2) Frontend
 
 ```bash
 cd frontend
 npm install --legacy-peer-deps
-cp .env.example .env   # set REACT_APP_BACKEND_URL=http://localhost:5000
+cp .env.example .env
 npm start
 ```
 
-App runs at **http://localhost:3000**, API at **http://localhost:5000**.  
-Verify the backend is healthy: `GET http://localhost:5000/api/health`
+Frontend env:
 
-## Public Deployment (Render + Vercel)
+- `REACT_APP_BACKEND_URL=http://localhost:5000` (or your deployed backend URL)
 
-### 1) Deploy Backend to Render
+## Health Check
 
-This repo includes `render.yaml` for the backend service (`backend/`).
+- API health endpoint: `GET /api/health`
+- Local URL: `http://localhost:5000/api/health`
 
-Required backend environment variables:
+## Security and Production Notes
 
-- `MONGODB_URI` - MongoDB Atlas connection string
-- `JWT_SECRET` - long random secret
-- `CLIENT_URL` - your frontend URL (for example `https://your-app.vercel.app`)
-- `CORS_ORIGINS` - comma-separated allowed origins (for example `https://your-app.vercel.app,https://www.your-domain.com`)
+- Auth now supports HttpOnly cookie sessions (and legacy Bearer fallback).
+- TURN credentials are fetched from authenticated backend endpoint (`/api/rtc/ice-config`), not hardcoded in frontend.
+- Socket identity fields are server-derived to prevent spoofing.
+- API hardening middleware is enabled:
+  - `helmet`
+  - `express-rate-limit`
+  - `express-mongo-sanitize`
+  - `hpp`
+  - `compression`
+  - `morgan`
 
-Render will expose your backend at a URL similar to:
+## Feature Overview
 
-`https://your-api.onrender.com`
-
-### 2) Deploy Frontend to Vercel
-
-Deploy `frontend/` as a Vercel project.
-
-Set:
-
-- `REACT_APP_BACKEND_URL=https://your-api.onrender.com`
-
-This repo includes `frontend/vercel.json` to rewrite all routes to `index.html` so React Router works on refresh/deep links.
-
-### 3) Post-deploy checks
-
-- Open `https://your-api.onrender.com/api/health` and verify `{ "ok": true, ... }`
-- Open your Vercel frontend URL and test:
-  - register/login
-  - workspace CRUD
-  - real-time chat/document updates (Socket.IO)
-
-## Features
-
-- **Collaborative Editor** — Rich-text editing with live typing indicators and auto-save
-- **Task Board** — Create, assign, and track tasks (To Do / In Progress / Done)
-- **Team Chat** — Real-time messaging
-- **File Sharing** — Upload and download files (up to 10 MB)
-- **Whiteboard** — Shared canvas with sticky notes, shapes, and drawing
-- **Workspaces** — Create workspaces and invite team members
+- Collaborative rich-text editor with realtime updates
+- Kanban-style task management
+- Team chat with polls
+- File upload/download
+- Whiteboard with drawing, shapes, notes, and image tools
+- WebRTC voice chat signaling via Socket.IO
 
 ## Project Structure
 
-```
+```text
 backend/
-  controllers/   Route handlers
-  models/        Mongoose schemas (User, Workspace, Document, Task, Message, File)
-  routes/        Express routers
-  services/      Business logic
-  server.js      HTTP server + Socket.IO
+  controllers/
+  middleware/
+  models/
+  routes/
+  services/
+  socket/
+  utils/
+  app.js
+  server.js
 
 frontend/src/
-  pages/         Landing, Login, Register, Dashboard, Workspace
-  components/    Feature components + ui/ (Radix primitives)
-  api/           Axios client with JWT interceptor
+  api/
+  components/
+  pages/
+  App.js
 ```
+
+## Deployment
+
+For deployment details (Render + Vercel or equivalent), keep backend and frontend env values aligned:
+
+- frontend origin must be included in backend `CORS_ORIGINS`
+- backend URL must be set in frontend `REACT_APP_BACKEND_URL`
+- `AUTH_COOKIE_SECURE=true` in production HTTPS environments
 
 ## License
 

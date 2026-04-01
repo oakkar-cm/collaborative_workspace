@@ -12,7 +12,10 @@ async function createWorkspace(name, userId) {
 }
 
 async function getWorkspacesByUser(userId) {
-  const workspaces = await Workspace.find({ members: userId });
+  const workspaces = await Workspace.find({ members: userId })
+    .select("_id name owner members createdAt updatedAt")
+    .sort({ updatedAt: -1 })
+    .lean();
   return workspaces;
 }
 
@@ -20,7 +23,7 @@ async function getWorkspaceById(workspaceId, userId) {
   const workspace = await Workspace.findOne({
     _id: workspaceId,
     members: userId
-  });
+  }).select("_id name owner members createdAt updatedAt");
   if (!workspace) {
     const err = new Error("Workspace not found");
     err.statusCode = 404;
@@ -33,7 +36,7 @@ async function updateWorkspace(workspaceId, userId, updates) {
   const workspace = await Workspace.findOne({
     _id: workspaceId,
     owner: userId
-  });
+  }).select("_id name owner members createdAt updatedAt");
   if (!workspace) {
     const err = new Error("Workspace not found or not owner");
     err.statusCode = 404;
@@ -48,7 +51,7 @@ async function deleteWorkspace(workspaceId, userId) {
   const workspace = await Workspace.findOne({
     _id: workspaceId,
     owner: userId
-  });
+  }).select("_id name owner members");
   if (!workspace) {
     const err = new Error("Workspace not found or not owner");
     err.statusCode = 404;
@@ -61,7 +64,7 @@ async function getMembers(workspaceId, userId) {
   const workspace = await Workspace.findOne({
     _id: workspaceId,
     members: userId
-  });
+  }).select("_id members");
   if (!workspace) {
     const err = new Error("Workspace not found");
     err.statusCode = 404;
@@ -69,12 +72,13 @@ async function getMembers(workspaceId, userId) {
   }
   const users = await User.find(
     { _id: { $in: workspace.members } },
-    "email firstName lastName"
+    "email firstName lastName avatar_url"
   ).lean();
   return users.map((u) => ({
     user_id: u._id,
     name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email,
-    email: u.email
+    email: u.email,
+    picture: u.avatar_url || ""
   }));
 }
 
@@ -82,7 +86,7 @@ async function inviteMember(workspaceId, ownerUserId, email) {
   const workspace = await Workspace.findOne({
     _id: workspaceId,
     members: ownerUserId
-  });
+  }).select("_id members");
   if (!workspace) {
     const err = new Error("Workspace not found");
     err.statusCode = 404;

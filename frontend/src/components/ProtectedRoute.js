@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getToken, clearToken } from '../api/authStorage';
 import { getMe } from '../api/endpoints/auth';
 
 const ProtectedRoute = ({ children }) => {
@@ -8,18 +7,11 @@ const ProtectedRoute = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(null);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      navigate('/login', { replace: true });
-      return;
-    }
-
     const checkAuth = async () => {
       try {
         await getMe();
         setIsAuthenticated(true);
       } catch (error) {
-        clearToken();
         setIsAuthenticated(false);
         navigate('/login', { replace: true });
       }

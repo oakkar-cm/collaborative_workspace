@@ -1,4 +1,5 @@
 const logger = require("../utils/logger");
+const config = require("../config");
 
 /**
  * Centralized error handler. Preserves existing response format:
@@ -21,13 +22,23 @@ function errorHandler(err, req, res, next) {
     message = firstError ? firstError.message : "Validation failed";
   }
 
+  // Mongoose cast error (invalid ObjectId format)
+  if (err.name === "CastError") {
+    status = 400;
+    message = "Invalid id format";
+  }
+
   // MongoDB duplicate key (e.g. email already exists)
   if (err.code === 11000) {
     status = 400;
     message = "User already exists";
   }
 
-  res.status(status).json({ message });
+  const payload = { message };
+  if (!config.isProduction && err.stack) {
+    payload.stack = err.stack;
+  }
+  res.status(status).json(payload);
 }
 
 module.exports = errorHandler;

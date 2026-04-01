@@ -10,4 +10,6 @@ const fileSchema = new mongoose.Schema({
   uploaded_at: { type: Date, default: Date.now }
 }, { timestamps: true, collection: "files" });
 
+fileSchema.index({ workspace_id: 1, createdAt: -1 });
+
 module.exports = mongoose.model("File", fileSchema);

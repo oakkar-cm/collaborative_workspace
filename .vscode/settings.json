@@ -1,0 +1,13 @@
+{
+  "editor.hover.highlightEnabled": true,
+  "editor.occurrencesHighlight": "singleFile",
+  "workbench.colorCustomizations": {
+    "editor.hoverHighlightBackground": "#6B728066",
+    "editor.wordHighlightBackground": "#6B728066",
+    "editor.wordHighlightStrongBackground": "#6B728099",
+    "editor.wordHighlightTextBackground": "#6B728066",
+    "editor.wordHighlightStrongTextBackground": "#6B728099",
+    "editor.selectionHighlightBackground": "#6B72804D",
+    "editor.selectionHighlightBorder": "#6B7280"
+  }
+}

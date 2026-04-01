@@ -19,11 +19,11 @@ async function create(req, res, next) {
 
 async function list(req, res, next) {
   try {
-    const { workspace_id } = req.query;
+    const { workspace_id, page, limit } = req.query;
     if (!workspace_id) {
       return res.status(400).json({ message: "workspace_id query param required" });
     }
-    const tasks = await taskService.listByWorkspace(workspace_id);
+    const tasks = await taskService.listByWorkspace(workspace_id, req.user.userId, { page, limit });
     res.json(tasks);
   } catch (err) {
     next(err);
@@ -32,7 +32,7 @@ async function list(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const task = await taskService.update(req.params.id, req.body);
+    const task = await taskService.update(req.params.id, req.user.userId, req.body);
 
     const io = req.app.get("io");
     if (io && task.workspace_id) io.to(String(task.workspace_id)).emit("task_update", { ...task, user_id: req.user.userId });
@@ -45,14 +45,11 @@ async function update(req, res, next) {
 
 async function remove(req, res, next) {
   try {
-    const Task = require("../models/Task");
-    const existing = await Task.findById(req.params.id).lean();
-    await taskService.remove(req.params.id);
+    const task = await taskService.getById(req.params.id, req.user.userId);
+    await taskService.remove(req.params.id, req.user.userId);
 
-    if (existing) {
-      const io = req.app.get("io");
-      if (io) io.to(String(existing.workspace_id)).emit("task_deleted", { task_id: existing._id, user_id: req.user.userId });
-    }
+    const io = req.app.get("io");
+    if (io) io.to(String(task.workspace_id)).emit("task_deleted", { task_id: req.params.id, user_id: req.user.userId });
 
     res.json({ message: "Task deleted" });
   } catch (err) {

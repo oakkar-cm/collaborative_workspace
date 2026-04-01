@@ -10,13 +10,21 @@ const server = http.createServer(app);
 const allowedOrigins = new Set(config.corsOrigins);
 const io = new Server(server, {
   cors: {
+    credentials: true,
     origin(origin, callback) {
       if (!origin) return callback(null, true);
       if (allowedOrigins.has(origin)) return callback(null, true);
       return callback(new Error("Socket CORS origin not allowed"));
     }
   },
-  path: "/api/socket.io"
+  path: "/api/socket.io",
+  pingInterval: 25000,
+  pingTimeout: 20000,
+  connectTimeout: 10000,
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true
+  }
 });
 
 app.set("io", io);

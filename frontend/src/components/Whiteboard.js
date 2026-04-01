@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Square, Circle, Type, Trash2, Pencil, Eraser,
-  Plus, Minus, Hand, Maximize2, MousePointer2, StickyNote
+  Plus, Minus, Hand, Maximize2, MousePointer2, StickyNote, ImagePlus, Scissors, Check, X
 } from 'lucide-react';
 import { Button } from './ui/button';
 
@@ -19,6 +19,8 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
 const ZOOM_SENSITIVITY = 0.001;
 const DOT_SPACING = 24;
+const MAX_UPLOAD_IMAGE_BYTES = 2 * 1024 * 1024;
+const MIN_CROP_SIZE = 30;
 
 function distToSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
@@ -36,8 +38,77 @@ function screenToWorld(screenX, screenY, pan, zoom) {
   };
 }
 
+function resizeRectFromHandle(rect, handle, pointer, minWidth = 60, minHeight = 40) {
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+
+  let nextX = rect.x;
+  let nextY = rect.y;
+  let nextRight = right;
+  let nextBottom = bottom;
+
+  if (handle.includes('w')) {
+    nextX = Math.min(pointer.x, right - minWidth);
+  }
+  if (handle.includes('e')) {
+    nextRight = Math.max(pointer.x, rect.x + minWidth);
+  }
+  if (handle.includes('n')) {
+    nextY = Math.min(pointer.y, bottom - minHeight);
+  }
+  if (handle.includes('s')) {
+    nextBottom = Math.max(pointer.y, rect.y + minHeight);
+  }
+
+  return {
+    x: nextX,
+    y: nextY,
+    width: Math.max(minWidth, nextRight - nextX),
+    height: Math.max(minHeight, nextBottom - nextY),
+  };
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampRectToBounds(rect, boundsWidth, boundsHeight, minWidth = MIN_CROP_SIZE, minHeight = MIN_CROP_SIZE) {
+  const width = clamp(rect.width, minWidth, boundsWidth);
+  const height = clamp(rect.height, minHeight, boundsHeight);
+  const x = clamp(rect.x, 0, Math.max(0, boundsWidth - width));
+  const y = clamp(rect.y, 0, Math.max(0, boundsHeight - height));
+  return { x, y, width, height };
+}
+
+/** CSS object-fit: cover — image fills the box; maps box coords → natural pixels */
+function getObjectCoverLayout(naturalWidth, naturalHeight, boxWidth, boxHeight) {
+  if (!naturalWidth || !naturalHeight || !boxWidth || !boxHeight) {
+    return { scale: 1, offsetX: 0, offsetY: 0 };
+  }
+  const scale = Math.max(boxWidth / naturalWidth, boxHeight / naturalHeight);
+  const scaledW = naturalWidth * scale;
+  const scaledH = naturalHeight * scale;
+  const offsetX = (boxWidth - scaledW) / 2;
+  const offsetY = (boxHeight - scaledH) / 2;
+  return { scale, offsetX, offsetY };
+}
+
+function boxRectToNaturalCrop(rect, layout, naturalWidth, naturalHeight) {
+  const { scale, offsetX, offsetY } = layout;
+  let sx = Math.round((rect.x - offsetX) / scale);
+  let sy = Math.round((rect.y - offsetY) / scale);
+  let sw = Math.max(1, Math.round(rect.width / scale));
+  let sh = Math.max(1, Math.round(rect.height / scale));
+  sx = clamp(sx, 0, Math.max(0, naturalWidth - 1));
+  sy = clamp(sy, 0, Math.max(0, naturalHeight - 1));
+  sw = clamp(sw, 1, naturalWidth - sx);
+  sh = clamp(sh, 1, naturalHeight - sy);
+  return { sx, sy, sw, sh };
+}
+
 const Whiteboard = ({ workspaceId, socket, currentUser }) => {
   const containerRef = useRef(null);
+  const imageInputRef = useRef(null);
 
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState('#000000');
@@ -48,6 +119,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
   const [shapes, setShapes] = useState([]);
   const [paths, setPaths] = useState([]);
   const [texts, setTexts] = useState([]);
+  const [images, setImages] = useState([]);
 
   const [selectedId, setSelectedId] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -62,13 +134,23 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
   const [currentPath, setCurrentPath] = useState([]);
   const [shapeStart, setShapeStart] = useState(null);
   const [shapePreview, setShapePreview] = useState(null);
+  const [imageDragging, setImageDragging] = useState(null);
+  const [imageResizing, setImageResizing] = useState(null);
+  const [imageCropping, setImageCropping] = useState(null);
 
   const [editingTextId, setEditingTextId] = useState(null);
   const [eraserSize, setEraserSize] = useState(20);
   const [eraserPos, setEraserPos] = useState(null);
   const isErasing = useRef(false);
   const pathsRef = useRef(paths);
+  const editingTextIdRef = useRef(editingTextId);
+  const spaceHeldRef = useRef(spaceHeld);
+  const deleteSelectedRef = useRef(() => {});
+  const pendingBroadcastRef = useRef(new Map());
+  const broadcastTimerRef = useRef(new Map());
   useEffect(() => { pathsRef.current = paths; }, [paths]);
+  useEffect(() => { editingTextIdRef.current = editingTextId; }, [editingTextId]);
+  useEffect(() => { spaceHeldRef.current = spaceHeld; }, [spaceHeld]);
 
   // ─── Socket handlers ────────────────────────────────────────────
   const handleWhiteboardInit = useCallback((data) => {
@@ -77,6 +159,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     setShapes(data.shapes || []);
     setPaths(data.paths || []);
     setTexts(data.texts || []);
+    setImages(data.images || []);
   }, [workspaceId]);
 
   const handleWhiteboardUpdate = useCallback((data) => {
@@ -85,15 +168,19 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     else if (data.type === 'shape') setShapes(data.shapes);
     else if (data.type === 'path') setPaths(data.paths);
     else if (data.type === 'text') setTexts(data.texts);
+    else if (data.type === 'image') setImages(data.images);
     else if (data.type === 'delete') {
       setStickyNotes(data.stickyNotes);
       setShapes(data.shapes);
+      setPaths(data.paths || []);
       setTexts(data.texts || []);
+      setImages(data.images || []);
     } else if (data.type === 'clear') {
       setStickyNotes([]);
       setShapes([]);
       setPaths([]);
       setTexts([]);
+      setImages([]);
     }
   }, [workspaceId, currentUser]);
 
@@ -103,36 +190,63 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     socket.on('whiteboard:init', handleWhiteboardInit);
     socket.emit('whiteboard:request', { workspace_id: workspaceId });
     return () => {
-      socket.off('whiteboard:update');
-      socket.off('whiteboard:init');
+      socket.off('whiteboard:update', handleWhiteboardUpdate);
+      socket.off('whiteboard:init', handleWhiteboardInit);
     };
   }, [socket, workspaceId, handleWhiteboardInit, handleWhiteboardUpdate]);
 
-  const broadcastUpdate = useCallback((type, updateData) => {
-    if (!socket) return;
+  const emitWhiteboardUpdate = useCallback((type, updateData) => {
+    if (!socket?.connected) return;
     socket.emit('whiteboard:update', {
       workspace_id: workspaceId,
       user_id: currentUser?.user_id,
       type,
-      ...updateData,
+      ...updateData
     });
   }, [socket, workspaceId, currentUser]);
+
+  const broadcastUpdate = useCallback((type, updateData, options = {}) => {
+    const { immediate = true, debounceMs = 140 } = options;
+    if (immediate) {
+      emitWhiteboardUpdate(type, updateData);
+      return;
+    }
+
+    pendingBroadcastRef.current.set(type, updateData);
+    if (broadcastTimerRef.current.has(type)) return;
+
+    const timer = setTimeout(() => {
+      broadcastTimerRef.current.delete(type);
+      const payload = pendingBroadcastRef.current.get(type);
+      pendingBroadcastRef.current.delete(type);
+      if (payload) {
+        emitWhiteboardUpdate(type, payload);
+      }
+    }, debounceMs);
+    broadcastTimerRef.current.set(type, timer);
+  }, [emitWhiteboardUpdate]);
+
+  useEffect(() => () => {
+    Array.from(broadcastTimerRef.current.values()).forEach((timer) => clearTimeout(timer));
+    broadcastTimerRef.current.clear();
+    pendingBroadcastRef.current.clear();
+  }, []);
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────
   useEffect(() => {
     const onKeyDown = (e) => {
-      if (editingTextId) return;
+      if (editingTextIdRef.current) return;
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.target.closest && e.target.closest('[contenteditable="true"]')) return;
 
-      if (e.code === 'Space' && !spaceHeld) {
+      if (e.code === 'Space' && !spaceHeldRef.current) {
         e.preventDefault();
         setSpaceHeld(true);
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        deleteSelected();
+        deleteSelectedRef.current();
       }
       if (e.key === 'v' || e.key === '1') setTool('select');
       if (e.key === 'h' || e.key === '2') setTool('hand');
@@ -161,7 +275,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  });
+  }, []);
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
@@ -169,13 +283,18 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     const updShapes = shapes.filter((s) => s.id !== selectedId);
     const updTexts = texts.filter((t) => t.id !== selectedId);
     const updPaths = paths.filter((p) => p.id !== selectedId);
+    const updImages = images.filter((img) => img.id !== selectedId);
     setStickyNotes(updNotes);
     setShapes(updShapes);
     setTexts(updTexts);
     setPaths(updPaths);
+    setImages(updImages);
     setSelectedId(null);
-    broadcastUpdate('delete', { stickyNotes: updNotes, shapes: updShapes, paths: updPaths, texts: updTexts });
-  }, [selectedId, stickyNotes, shapes, texts, paths, broadcastUpdate]);
+    broadcastUpdate('delete', { stickyNotes: updNotes, shapes: updShapes, paths: updPaths, texts: updTexts, images: updImages });
+  }, [selectedId, stickyNotes, shapes, texts, paths, images, broadcastUpdate]);
+  useEffect(() => {
+    deleteSelectedRef.current = deleteSelected;
+  }, [deleteSelected]);
 
   // ─── Wheel → zoom toward cursor ───────────────────────────────────
   useEffect(() => {
@@ -253,6 +372,62 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
 
     const { x, y } = getWorldPos(e);
 
+    if (imageDragging) {
+      const updated = images.map((img) =>
+        img.id === imageDragging.id
+          ? { ...img, x: x - imageDragging.ox, y: y - imageDragging.oy }
+          : img
+      );
+      setImages(updated);
+      return;
+    }
+
+    if (imageCropping?.mode) {
+      const activeImage = images.find((item) => item.id === imageCropping.id);
+      if (!activeImage) return;
+      const localX = x - activeImage.x;
+      const localY = y - activeImage.y;
+
+      if (imageCropping.mode === 'move') {
+        const nextRect = clampRectToBounds({
+          ...imageCropping.rect,
+          x: localX - imageCropping.ox,
+          y: localY - imageCropping.oy
+        }, activeImage.width, activeImage.height);
+        setImageCropping((prev) => prev ? { ...prev, rect: nextRect } : prev);
+        return;
+      }
+
+      if (imageCropping.mode === 'resize') {
+        const resized = resizeRectFromHandle(
+          imageCropping.rect,
+          imageCropping.handle,
+          { x: localX, y: localY },
+          MIN_CROP_SIZE,
+          MIN_CROP_SIZE
+        );
+        const nextRect = clampRectToBounds(resized, activeImage.width, activeImage.height);
+        setImageCropping((prev) => prev ? { ...prev, rect: nextRect } : prev);
+        return;
+      }
+    }
+
+    if (imageResizing) {
+      const updated = images.map((img) => {
+        if (img.id !== imageResizing.id) return img;
+        const nextRect = resizeRectFromHandle(
+          { x: img.x, y: img.y, width: img.width, height: img.height },
+          imageResizing.handle,
+          { x, y },
+          60,
+          40
+        );
+        return { ...img, ...nextRect };
+      });
+      setImages(updated);
+      return;
+    }
+
     if (tool === 'eraser') {
       const rect = containerRef.current.getBoundingClientRect();
       setEraserPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
@@ -295,6 +470,23 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     if (dragging) {
       broadcastUpdate('sticky', { stickyNotes });
       setDragging(null);
+      return;
+    }
+
+    if (imageDragging) {
+      broadcastUpdate('image', { images });
+      setImageDragging(null);
+      return;
+    }
+
+    if (imageResizing) {
+      broadcastUpdate('image', { images });
+      setImageResizing(null);
+      return;
+    }
+
+    if (imageCropping?.mode) {
+      setImageCropping((prev) => (prev ? { ...prev, mode: null, handle: null } : prev));
       return;
     }
 
@@ -359,16 +551,74 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     setEditingTextId(t.id);
   };
 
+  const getWorldCenter = () => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 100, y: 100 };
+    return screenToWorld(rect.width / 2, rect.height / 2, pan, zoom);
+  };
+
+  const handleImageUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      window.alert('Please select an image file');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_IMAGE_BYTES) {
+      window.alert('Image too large. Max size is 2MB.');
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Failed to read image'));
+        reader.readAsDataURL(file);
+      });
+
+      const dims = await new Promise((resolve, reject) => {
+        const image = new window.Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error('Invalid image'));
+        image.src = dataUrl;
+      });
+
+      const center = getWorldCenter();
+      const maxWidth = 320;
+      const scale = dims.width > maxWidth ? maxWidth / dims.width : 1;
+      const width = Math.max(100, Math.round(dims.width * scale));
+      const height = Math.max(80, Math.round(dims.height * scale));
+      const imageItem = {
+        id: `image_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        x: center.x - width / 2,
+        y: center.y - height / 2,
+        width,
+        height,
+        src: dataUrl,
+        name: file.name
+      };
+      const updated = [...images, imageItem];
+      setImages(updated);
+      setSelectedId(imageItem.id);
+      broadcastUpdate('image', { images: updated });
+    } catch {
+      window.alert('Could not upload image');
+    }
+  };
+
   const updateStickyNote = (id, updates) => {
     const updated = stickyNotes.map((n) => (n.id === id ? { ...n, ...updates } : n));
     setStickyNotes(updated);
-    broadcastUpdate('sticky', { stickyNotes: updated });
+    broadcastUpdate('sticky', { stickyNotes: updated }, { immediate: false, debounceMs: 180 });
   };
 
   const updateText = (id, updates) => {
     const updated = texts.map((t) => (t.id === id ? { ...t, ...updates } : t));
     setTexts(updated);
-    broadcastUpdate('text', { texts: updated });
+    broadcastUpdate('text', { texts: updated }, { immediate: false, debounceMs: 180 });
   };
 
   const cycleStickyColor = (id) => {
@@ -418,7 +668,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
 
     if (changed) {
       setPaths(result);
-      broadcastUpdate('path', { paths: result });
+      broadcastUpdate('path', { paths: result }, { immediate: false, debounceMs: 120 });
     }
     return changed ? result : currentPaths;
   }, [eraserSize, zoom, broadcastUpdate]);
@@ -434,12 +684,128 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
     setDragging({ id: noteId, ox: x - note.x, oy: y - note.y });
   };
 
+  const handleImageMouseDown = (e, imageId) => {
+    e.stopPropagation();
+    if (tool !== 'select') return;
+    if (imageCropping?.id === imageId) return;
+    const { x, y } = getWorldPos(e);
+    const image = images.find((item) => item.id === imageId);
+    if (!image) return;
+    setSelectedId(imageId);
+    setImageDragging({ id: imageId, ox: x - image.x, oy: y - image.y });
+  };
+
+  const handleImageResizeMouseDown = (e, imageId, handle) => {
+    e.stopPropagation();
+    if (tool !== 'select') return;
+    if (imageCropping?.id === imageId) return;
+    setSelectedId(imageId);
+    setImageResizing({ id: imageId, handle });
+  };
+
+  const startImageCrop = () => {
+    const selectedImage = images.find((img) => img.id === selectedId);
+    if (!selectedImage) return;
+    const insetX = Math.max(8, Math.round(selectedImage.width * 0.1));
+    const insetY = Math.max(8, Math.round(selectedImage.height * 0.1));
+    setImageCropping({
+      id: selectedImage.id,
+      rect: {
+        x: insetX,
+        y: insetY,
+        width: Math.max(MIN_CROP_SIZE, selectedImage.width - insetX * 2),
+        height: Math.max(MIN_CROP_SIZE, selectedImage.height - insetY * 2),
+      },
+      mode: null,
+      handle: null,
+      ox: 0,
+      oy: 0,
+    });
+  };
+
+  const cancelImageCrop = () => {
+    setImageCropping(null);
+  };
+
+  const handleCropAreaMouseDown = (e, imageId) => {
+    e.stopPropagation();
+    if (tool !== 'select') return;
+    const image = images.find((img) => img.id === imageId);
+    if (!image || imageCropping?.id !== imageId) return;
+    const { x, y } = getWorldPos(e);
+    const localX = x - image.x;
+    const localY = y - image.y;
+    setImageCropping((prev) => (
+      prev
+        ? { ...prev, mode: 'move', ox: localX - prev.rect.x, oy: localY - prev.rect.y }
+        : prev
+    ));
+  };
+
+  const handleCropResizeMouseDown = (e, imageId, handle) => {
+    e.stopPropagation();
+    if (tool !== 'select') return;
+    if (imageCropping?.id !== imageId) return;
+    setImageCropping((prev) => (prev ? { ...prev, mode: 'resize', handle } : prev));
+  };
+
+  const applyImageCrop = async () => {
+    if (!imageCropping?.id) return;
+    const target = images.find((img) => img.id === imageCropping.id);
+    if (!target) return;
+    const rect = clampRectToBounds(imageCropping.rect, target.width, target.height);
+
+    try {
+      const sourceImage = await new Promise((resolve, reject) => {
+        const image = new window.Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('Failed to load image for crop'));
+        image.src = target.src;
+      });
+
+      const layout = getObjectCoverLayout(
+        sourceImage.naturalWidth,
+        sourceImage.naturalHeight,
+        target.width,
+        target.height
+      );
+      const { sx, sy, sw, sh } = boxRectToNaturalCrop(rect, layout, sourceImage.naturalWidth, sourceImage.naturalHeight);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = sw;
+      canvas.height = sh;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas unavailable');
+      ctx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sw, sh);
+      const croppedDataUrl = canvas.toDataURL('image/png');
+
+      const updated = images.map((img) => (
+        img.id === target.id
+          ? {
+              ...img,
+              src: croppedDataUrl,
+              x: img.x + rect.x,
+              y: img.y + rect.y,
+              width: rect.width,
+              height: rect.height
+            }
+          : img
+      ));
+      setImages(updated);
+      setImageCropping(null);
+      broadcastUpdate('image', { images: updated });
+    } catch {
+      window.alert('Failed to crop image');
+    }
+  };
+
   const clearCanvas = () => {
     if (!window.confirm('Clear entire whiteboard? This cannot be undone.')) return;
     setStickyNotes([]);
     setShapes([]);
     setPaths([]);
     setTexts([]);
+    setImages([]);
     broadcastUpdate('clear', {});
   };
 
@@ -720,10 +1086,107 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
             )}
           </div>
         ))}
+
+        {/* Image elements */}
+        {images.map((img) => (
+          <div
+            key={img.id}
+            className={`absolute overflow-hidden rounded-md border bg-neutral-900/5 shadow-md ${
+              selectedId === img.id ? 'ring-2 ring-[#6366F1]' : 'border-black/10'
+            }`}
+            style={{ left: img.x, top: img.y, width: img.width, height: img.height, zIndex: 2 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedId(img.id);
+            }}
+            onMouseDown={(e) => handleImageMouseDown(e, img.id)}
+          >
+            <img
+              src={img.src}
+              alt={img.name || 'Whiteboard upload'}
+              className="block h-full w-full select-none object-cover object-center"
+              draggable={false}
+            />
+            {imageCropping?.id === img.id && (() => {
+              const r = imageCropping.rect;
+              const W = img.width;
+              const H = img.height;
+              return (
+                <div className="absolute inset-0">
+                  <div
+                    className="absolute left-0 right-0 top-0 bg-black/50"
+                    style={{ height: r.y }}
+                  />
+                  <div
+                    className="absolute left-0 right-0 bg-black/50"
+                    style={{ top: r.y + r.height, height: Math.max(0, H - r.y - r.height) }}
+                  />
+                  <div
+                    className="absolute left-0 bg-black/50"
+                    style={{ top: r.y, width: r.x, height: r.height }}
+                  />
+                  <div
+                    className="absolute bg-black/50"
+                    style={{
+                      left: r.x + r.width,
+                      top: r.y,
+                      width: Math.max(0, W - r.x - r.width),
+                      height: r.height
+                    }}
+                  />
+                  <div
+                    className="absolute border-2 border-dashed border-white shadow-[inset_0_0_0_1px_rgba(0,0,0,0.2)]"
+                    style={{
+                      left: r.x,
+                      top: r.y,
+                      width: r.width,
+                      height: r.height,
+                      boxSizing: 'border-box'
+                    }}
+                    onMouseDown={(e) => handleCropAreaMouseDown(e, img.id)}
+                  >
+                    {[
+                      { key: 'n', className: 'left-1/2 -top-1.5 -translate-x-1/2 h-2.5 w-6 cursor-ns-resize rounded-full' },
+                      { key: 'e', className: '-right-1.5 top-1/2 -translate-y-1/2 h-6 w-2.5 cursor-ew-resize rounded-full' },
+                      { key: 's', className: 'left-1/2 -bottom-1.5 -translate-x-1/2 h-2.5 w-6 cursor-ns-resize rounded-full' },
+                      { key: 'w', className: '-left-1.5 top-1/2 -translate-y-1/2 h-6 w-2.5 cursor-ew-resize rounded-full' },
+                    ].map((handle) => (
+                      <button
+                        key={`crop_${img.id}_${handle.key}`}
+                        type="button"
+                        className={`absolute border border-[#1E3A8A] bg-[#93C5FD] shadow ${handle.className}`}
+                        onMouseDown={(e) => handleCropResizeMouseDown(e, img.id, handle.key)}
+                        title="Adjust crop border"
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            {selectedId === img.id && tool === 'select' && imageCropping?.id !== img.id && (
+              <>
+                {[
+                  { key: 'nw', className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
+                  { key: 'ne', className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
+                  { key: 'se', className: '-right-1.5 -bottom-1.5 cursor-nwse-resize' },
+                  { key: 'sw', className: '-left-1.5 -bottom-1.5 cursor-nesw-resize' },
+                ].map((handle) => (
+                  <button
+                    key={`${img.id}_${handle.key}`}
+                    type="button"
+                    className={`absolute h-3 w-3 rounded-full border border-white bg-[#2563EB] shadow ${handle.className}`}
+                    onMouseDown={(e) => handleImageResizeMouseDown(e, img.id, handle.key)}
+                    title="Resize image"
+                  />
+                ))}
+              </>
+            )}
+          </div>
+        ))}
       </div>
 
       {/* ─── Empty state ──────────────────────────────────────── */}
-      {stickyNotes.length === 0 && paths.length === 0 && shapes.length === 0 && texts.length === 0 && (
+      {stickyNotes.length === 0 && paths.length === 0 && shapes.length === 0 && texts.length === 0 && images.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center text-[#94A3B8]">
             <StickyNote className="w-16 h-16 mx-auto mb-4 opacity-30" />
@@ -750,7 +1213,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
               className={`h-9 w-9 p-0 rounded-lg transition-all ${
                 tool === t.id
                   ? 'bg-[#6366F1] text-white hover:bg-[#5558E3] hover:text-white'
-                  : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'
+                  : 'text-[#64748B] hover:text-[#6B7280] hover:bg-[#F1F5F9]'
               }`}
               title={t.label}
             >
@@ -789,7 +1252,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
                   className={`h-7 px-2 rounded-md text-[10px] font-medium transition-all ${
                     penType === key
                       ? 'bg-[#6366F1] text-white'
-                      : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
+                      : 'text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#6B7280]'
                   }`}
                   title={pt.label}
                 >
@@ -816,6 +1279,16 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
 
         <div className="w-px h-7 bg-[#E2E8F0] mx-1" />
 
+        <Button
+          onClick={() => imageInputRef.current?.click()}
+          variant="ghost"
+          size="sm"
+          className="h-9 w-9 p-0 rounded-lg text-[#64748B] hover:text-[#6B7280] hover:bg-[#F1F5F9]"
+          title="Upload image"
+        >
+          <ImagePlus className="w-4 h-4" />
+        </Button>
+
         {/* Color picker */}
         {COLORS.map((c) => (
           <button
@@ -841,6 +1314,47 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
         >
           <Trash2 className="w-4 h-4" />
         </Button>
+
+        {tool === 'select' && selectedId && images.some((img) => img.id === selectedId) && (
+          <>
+            <div className="w-px h-7 bg-[#E2E8F0] mx-1" />
+            {!imageCropping ? (
+              <Button
+                onClick={startImageCrop}
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2 rounded-lg text-[#64748B] hover:text-[#6B7280] hover:bg-[#F1F5F9]"
+                title="Crop selected image"
+              >
+                <Scissors className="w-4 h-4 mr-1" />
+                Crop
+              </Button>
+            ) : (
+              <>
+                <Button
+                  onClick={applyImageCrop}
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2 rounded-lg text-[#16A34A] hover:bg-green-50"
+                  title="Apply crop"
+                >
+                  <Check className="w-4 h-4 mr-1" />
+                  Apply
+                </Button>
+                <Button
+                  onClick={cancelImageCrop}
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2 rounded-lg text-[#DC2626] hover:bg-red-50"
+                  title="Cancel crop"
+                >
+                  <X className="w-4 h-4 mr-1" />
+                  Cancel
+                </Button>
+              </>
+            )}
+          </>
+        )}
       </div>
 
       {/* ─── Zoom controls (bottom-right) ─────────────────────── */}
@@ -872,7 +1386,7 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
             setZoom(1);
             setPan({ x: 0, y: 0 });
           }}
-          className="text-xs font-medium text-[#64748B] hover:text-[#0F172A] min-w-[48px] text-center transition-colors"
+          className="text-xs font-medium text-[#64748B] hover:text-[#6B7280] min-w-[48px] text-center transition-colors"
           title="Reset zoom (Ctrl+0)"
         >
           {Math.round(zoom * 100)}%
@@ -924,6 +1438,14 @@ const Whiteboard = ({ workspaceId, socket, currentUser }) => {
           }}
         />
       )}
+
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageUpload}
+      />
     </div>
   );
 };

@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import client from '../api/client';
-import { getToken } from '../api/authStorage';
 import { toast } from 'sonner';
 import io from 'socket.io-client';
 import { 
   ArrowLeft, FileText, MessageSquare, CheckSquare, Upload, 
-  Users, Send, Plus, Download, X, Check, Circle, Trash2, Columns3
+  Users, Send, Plus, Download, X, Check, Circle, Trash2, Columns3, BarChart3
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -17,13 +16,64 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import CollaborativeEditor from '../components/CollaborativeEditor';
 import VoiceChat from '../components/VoiceChat';
 import Whiteboard from '../components/Whiteboard';
+import UserAvatar from '../components/UserAvatar';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const SOCKET_PATH = "/api/socket.io";
 
+const normalizePollOption = (option, idx) => {
+  if (typeof option === 'string') {
+    return {
+      option_id: `opt_${idx}`,
+      text: option,
+      votes_count: 0,
+      voter_ids: []
+    };
+  }
+
+  const voterIds = Array.isArray(option?.voter_ids)
+    ? option.voter_ids.map((id) => String(id))
+    : Array.isArray(option?.votes)
+      ? option.votes.map((id) => String(id))
+      : [];
+
+  return {
+    option_id: String(option?.option_id || option?.id || `opt_${idx}`),
+    text: String(option?.text || ''),
+    votes_count: typeof option?.votes_count === 'number' ? option.votes_count : voterIds.length,
+    voter_ids: voterIds
+  };
+};
+
+const normalizeMessage = (msg) => {
+  if (!msg || typeof msg !== 'object') return msg;
+
+  const normalized = {
+    ...msg,
+    message_id: String(msg.message_id || msg._id || ''),
+    workspace_id: String(msg.workspace_id || ''),
+    user_id: String(msg.user_id || '')
+  };
+
+  if (normalized.type !== 'poll' && !normalized.poll) {
+    return normalized;
+  }
+
+  const poll = normalized.poll || {};
+  normalized.type = 'poll';
+  normalized.poll = {
+    question: poll.question || normalized.content || '',
+    allow_multiple_answers: poll.allow_multiple_answers !== false,
+    options: Array.isArray(poll.options) ? poll.options.map(normalizePollOption) : []
+  };
+
+  return normalized;
+};
+
 const WorkspacePage = () => {
   const { workspaceId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const socketRef = useRef(null);
   const fileInputRef = useRef(null);
   const currentUserRef = useRef(null);
@@ -50,6 +100,12 @@ const WorkspacePage = () => {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviting, setInviting] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
+  const [showPollComposer, setShowPollComposer] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+  const [pollAllowMultipleAnswers, setPollAllowMultipleAnswers] = useState(true);
+  const [pollOptionDrafts, setPollOptionDrafts] = useState({});
+  const [addingPollOptionFor, setAddingPollOptionFor] = useState({});
 
   const messagesEndRef = useRef(null);
 
@@ -61,6 +117,14 @@ const WorkspacePage = () => {
       }
     };
   }, [workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const allowedTabs = new Set(['editor', 'whiteboard', 'chat', 'tasks']);
+    if (tab && allowedTabs.has(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
 
   const loadInitialData = async () => {
     try {
@@ -85,7 +149,9 @@ const WorkspacePage = () => {
         setDocuments(docsRes.value.data);
         if (docsRes.value.data.length > 0) setActiveDocument(docsRes.value.data[0]);
       }
-      if (messagesRes.status === 'fulfilled') setMessages(messagesRes.value.data);
+      if (messagesRes.status === 'fulfilled') {
+        setMessages((messagesRes.value.data || []).map(normalizeMessage));
+      }
       if (tasksRes.status === 'fulfilled') setTasks(tasksRes.value.data);
       if (filesRes.status === 'fulfilled') setFiles(filesRes.value.data);
       if (membersRes.status === 'fulfilled') setMembers(membersRes.value.data);
@@ -100,9 +166,19 @@ const WorkspacePage = () => {
   };
 
   const initializeSocket = () => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
+
     socketRef.current = io(BACKEND_URL || window.location.origin, {
       path: SOCKET_PATH,
-      auth: { token: getToken() }
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000,
+      timeout: 10000
     });
 
     socketRef.current.on('connect', () => {
@@ -112,8 +188,15 @@ const WorkspacePage = () => {
 
     socketRef.current.on('message', (data) => {
       if (data.user_id === currentUserRef.current?.user_id) return;
-      setMessages(prev => [...prev, data]);
+      setMessages(prev => [...prev, normalizeMessage(data)]);
       scrollToBottom();
+    });
+
+    socketRef.current.on('message_updated', (data) => {
+      const normalizedData = normalizeMessage(data);
+      setMessages(prev => prev.map((msg) => (
+        String(msg.message_id) === String(normalizedData.message_id) ? normalizedData : msg
+      )));
     });
 
     socketRef.current.on('task', (data) => {
@@ -185,7 +268,7 @@ const WorkspacePage = () => {
         '/messages',
         { workspace_id: workspaceId, content: messageInput }
       );
-      setMessages(prev => [...prev, response.data]);
+      setMessages(prev => [...prev, normalizeMessage(response.data)]);
       setMessageInput('');
       scrollToBottom();
     } catch (error) {
@@ -218,6 +301,122 @@ const WorkspacePage = () => {
     } catch (error) {
       console.error('Failed to create task:', error);
       toast.error('Failed to create task');
+    }
+  };
+
+  const updatePollOption = (idx, value) => {
+    setPollOptions((prev) => prev.map((opt, optionIdx) => optionIdx === idx ? value : opt));
+  };
+
+  const addPollOption = () => {
+    setPollOptions((prev) => prev.length >= 10 ? prev : [...prev, '']);
+  };
+
+  const removePollOption = (idx) => {
+    setPollOptions((prev) => prev.length <= 2 ? prev : prev.filter((_, optionIdx) => optionIdx !== idx));
+  };
+
+  const resetPollComposer = () => {
+    setPollQuestion('');
+    setPollOptions(['', '']);
+    setPollAllowMultipleAnswers(true);
+    setShowPollComposer(false);
+  };
+
+  const handleCreatePoll = async () => {
+    const options = pollOptions.map((opt) => opt.trim()).filter(Boolean);
+    if (!pollQuestion.trim() || options.length < 2) {
+      toast.error('Add a poll question and at least 2 options');
+      return;
+    }
+
+    try {
+      const response = await client.post('/messages', {
+        workspace_id: workspaceId,
+        type: 'poll',
+        content: pollQuestion.trim(),
+        poll: {
+          question: pollQuestion.trim(),
+          allow_multiple_answers: pollAllowMultipleAnswers,
+          options
+        }
+      });
+      const normalizedPollMessage = normalizeMessage(response.data);
+      if (!normalizedPollMessage?.poll?.options?.length) {
+        normalizedPollMessage.poll = {
+          question: pollQuestion.trim(),
+          allow_multiple_answers: pollAllowMultipleAnswers,
+          options: options.map((text, idx) => ({
+            option_id: `local_opt_${idx}`,
+            text,
+            votes_count: 0,
+            voter_ids: []
+          }))
+        };
+      }
+      setMessages((prev) => [...prev, normalizedPollMessage]);
+      resetPollComposer();
+      scrollToBottom();
+      toast.success('Poll created');
+    } catch (error) {
+      console.error('Failed to create poll:', error);
+      toast.error(error.response?.data?.message || 'Failed to create poll');
+    }
+  };
+
+  const handleVotePoll = async (messageId, optionId) => {
+    if (!messageId || !optionId) {
+      toast.error('Invalid poll option');
+      return;
+    }
+
+    try {
+      const response = await client.post(`/messages/${messageId}/poll-vote`, {
+        workspace_id: workspaceId,
+        option_id: optionId
+      });
+      const normalizedResponse = normalizeMessage(response.data);
+      setMessages((prev) => prev.map((msg) => (
+        String(msg.message_id) === String(normalizedResponse.message_id) ? normalizedResponse : msg
+      )));
+    } catch (error) {
+      console.error('Failed to vote on poll:', error);
+      toast.error(error.response?.data?.message || 'Failed to vote');
+    }
+  };
+
+  const updatePollOptionDraft = (messageId, value) => {
+    setPollOptionDrafts((prev) => ({
+      ...prev,
+      [String(messageId)]: value
+    }));
+  };
+
+  const handleAddPollOption = async (messageId) => {
+    const normalizedMessageId = String(messageId || '');
+    const optionText = (pollOptionDrafts[normalizedMessageId] || '').trim();
+    if (!normalizedMessageId || !optionText) {
+      toast.error('Enter an option first');
+      return;
+    }
+
+    setAddingPollOptionFor((prev) => ({ ...prev, [normalizedMessageId]: true }));
+    try {
+      const response = await client.post(`/messages/${normalizedMessageId}/poll-options`, {
+        workspace_id: workspaceId,
+        option_text: optionText
+      });
+      const normalizedResponse = normalizeMessage(response.data);
+      setMessages((prev) => prev.map((msg) => (
+        String(msg.message_id) === normalizedMessageId ? normalizedResponse : msg
+      )));
+      setPollOptionDrafts((prev) => ({ ...prev, [normalizedMessageId]: '' }));
+      toast.success('Poll option added');
+    } catch (error) {
+      console.error('Failed to add poll option:', error);
+      toast.error(error.response?.data?.message || 'Failed to add poll option');
+    } finally {
+      setAddingPollOptionFor((prev) => ({ ...prev, [normalizedMessageId]: false }));
     }
   };
 
@@ -273,13 +472,14 @@ const WorkspacePage = () => {
   };
 
   const handleDownloadFile = async (fileId, filename) => {
+    let url = null;
     try {
       const response = await client.get(
         `/files/${fileId}/download`,
         { responseType: 'blob' }
       );
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', filename);
@@ -289,6 +489,8 @@ const WorkspacePage = () => {
     } catch (error) {
       console.error('Failed to download file:', error);
       toast.error('Failed to download file');
+    } finally {
+      if (url) window.URL.revokeObjectURL(url);
     }
   };
 
@@ -416,12 +618,11 @@ const WorkspacePage = () => {
               </Button>
               <div className="flex -space-x-2">
                 {members.slice(0, 3).map((member) => (
-                  <img
+                  <UserAvatar
                     key={member.user_id}
-                    src={member.picture || 'https://via.placeholder.com/32'}
-                    alt={member.name}
-                    title={member.name}
-                    className="w-8 h-8 rounded-full ring-2 ring-white"
+                    name={member.name}
+                    imageUrl={member.picture}
+                    className="w-8 h-8 ring-2 ring-white"
                   />
                 ))}
                 {members.length > 3 && (
@@ -508,7 +709,7 @@ const WorkspacePage = () => {
                 className={`inline-flex items-center rounded-xl px-3 py-2 text-sm font-medium transition-all ${
                   activeTab === tab.id
                     ? 'bg-[#DBEAFE] text-[#1E3A8A]'
-                    : 'text-[#64748B] hover:bg-blue-50 hover:text-[#0F172A]'
+                    : 'text-[#64748B] hover:bg-blue-50 hover:text-[#6B7280]'
                 }`}
               >
                 <tab.icon className="w-4 h-4 mr-2" />
@@ -563,69 +764,245 @@ const WorkspacePage = () => {
             </div>
 
             {/* Chat */}
-            <div className="absolute inset-0 flex flex-col" style={{ display: activeTab === 'chat' ? 'flex' : 'none' }}>
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                {messages.map(msg => (
-                  <div 
-                    key={msg.message_id}
-                    data-testid={`message-${msg.message_id}`}
-                    className={`flex gap-3 animate-fade-in ${msg.user_id === currentUser?.user_id ? 'justify-end' : ''}`}
-                  >
-                    {msg.user_id !== currentUser?.user_id && (
-                      <img
-                        src={msg.user_picture || 'https://via.placeholder.com/40'}
-                        alt={msg.user_name}
-                        className="w-10 h-10 rounded-full flex-shrink-0"
+            <div className="absolute inset-0 flex gap-4 p-4" style={{ display: activeTab === 'chat' ? 'flex' : 'none' }}>
+              <div className="glass-panel flex min-w-0 flex-1 flex-col rounded-3xl">
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {messages.map(msg => (
+                    <div 
+                      key={msg.message_id}
+                      data-testid={`message-${msg.message_id}`}
+                      className={`flex gap-3 animate-fade-in ${msg.user_id === currentUser?.user_id ? 'justify-end' : ''}`}
+                    >
+                      {msg.user_id !== currentUser?.user_id && (
+                      <UserAvatar
+                        name={msg.user_name}
+                        imageUrl={msg.user_picture}
+                        className="w-10 h-10 flex-shrink-0"
                       />
-                    )}
-                    <div className={`max-w-[70%] ${msg.user_id === currentUser?.user_id ? 'items-end' : ''}`}>
-                      <div className="mb-1 flex items-baseline gap-2">
-                        <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
-                        <span className="text-mono text-xs text-[#94A3B8]">
-                          {new Date(msg.created_at).toLocaleTimeString()}
-                        </span>
+                      )}
+                      <div className={`max-w-[72%] ${msg.user_id === currentUser?.user_id ? 'items-end' : ''}`}>
+                        <div className="mb-1 flex items-baseline gap-2">
+                          <span className="font-medium text-[#0F172A]">{msg.user_name}</span>
+                          <span className="text-mono text-xs text-[#94A3B8]">
+                            {new Date(msg.created_at).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        {msg.type === 'poll' ? (
+                          <div className="rounded-2xl border border-[#B7E4C7] bg-[#EAF9E9] p-3 text-[#0F172A] shadow-sm">
+                            <p className="mb-2 text-sm font-semibold">{msg.poll?.question || msg.content}</p>
+                            <p className="mb-2 text-xs text-[#64748B]">
+                              {msg.poll?.allow_multiple_answers === false ? 'Select one option' : 'Select one or more options'}
+                            </p>
+                            <div className="space-y-2">
+                              {(msg.poll?.options || []).map((option) => {
+                                const myUserId = String(currentUser?.user_id || '');
+                                const voterIds = option.voter_ids || [];
+                                const selected = voterIds.includes(myUserId);
+                                const votesCount = Number(option.votes_count || 0);
+                                const allOptions = msg.poll?.options || [];
+                                const maxVotes = allOptions.reduce((acc, pollOption) => (
+                                  Math.max(acc, Number(pollOption?.votes_count || 0))
+                                ), 0);
+                                const progressWidth = maxVotes > 0 ? Math.max((votesCount / maxVotes) * 100, 8) : 0;
+                                const voterProfiles = voterIds
+                                  .map((voterId) => members.find((member) => String(member.user_id) === String(voterId)))
+                                  .filter(Boolean)
+                                  .slice(0, 2);
+                                return (
+                                  <button
+                                    key={option.option_id}
+                                    onClick={() => handleVotePoll(msg.message_id, option.option_id)}
+                                    className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                                      selected
+                                        ? 'border-[#16A34A] bg-[#F0FDF4] text-[#14532D]'
+                                        : 'border-[#CFE8D6] bg-white/90 hover:bg-white'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="flex items-center gap-2">
+                                        {selected ? <Check className="h-4 w-4 text-[#16A34A]" /> : <Circle className="h-4 w-4 text-[#64748B]" />}
+                                        {option.text}
+                                      </span>
+                                      <span className="flex items-center gap-1">
+                                        {voterProfiles.length > 0 && (
+                                          <span className="flex -space-x-2">
+                                            {voterProfiles.map((member) => (
+                                              <UserAvatar
+                                                key={`${option.option_id}-${member.user_id}`}
+                                                name={member.name}
+                                                imageUrl={member.picture}
+                                                className="h-5 w-5 ring-2 ring-white"
+                                              />
+                                            ))}
+                                          </span>
+                                        )}
+                                        <span className="rounded-full bg-[#DCFCE7] px-2 py-0.5 text-xs font-medium text-[#166534]">
+                                          {votesCount}
+                                        </span>
+                                      </span>
+                                    </div>
+                                    <div className="mt-2 h-1.5 w-full rounded-full bg-[#D1FAE5]">
+                                      <div
+                                        className="h-1.5 rounded-full bg-[#14B8A6] transition-all"
+                                        style={{ width: `${progressWidth}%` }}
+                                      />
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <p className="mt-3 text-center text-sm font-medium text-[#0F766E]">View votes</p>
+                            {msg.user_id === currentUser?.user_id && (
+                              <div className="mt-2 flex gap-2">
+                                <Input
+                                  value={pollOptionDrafts[String(msg.message_id)] || ''}
+                                  onChange={(e) => updatePollOptionDraft(msg.message_id, e.target.value)}
+                                  onKeyPress={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleAddPollOption(msg.message_id);
+                                    }
+                                  }}
+                                  placeholder="Add an option"
+                                  className="h-9 rounded-lg border-blue-100 bg-white"
+                                  disabled={addingPollOptionFor[String(msg.message_id)] || (msg.poll?.options || []).length >= 10}
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleAddPollOption(msg.message_id)}
+                                  disabled={addingPollOptionFor[String(msg.message_id)] || (msg.poll?.options || []).length >= 10}
+                                >
+                                  {addingPollOptionFor[String(msg.message_id)] ? 'Adding...' : 'Add'}
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p
+                            className={`rounded-2xl px-4 py-2 text-sm shadow-sm ${
+                              msg.user_id === currentUser?.user_id
+                                ? 'bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white'
+                                : 'border border-blue-100 bg-white/90 text-[#0F172A]'
+                            }`}
+                          >
+                            {msg.content}
+                          </p>
+                        )}
                       </div>
-                      <p
-                        className={`rounded-2xl px-4 py-2 text-sm ${
-                          msg.user_id === currentUser?.user_id
-                            ? 'bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white'
-                            : 'bg-white/80 text-[#0F172A] border border-blue-100'
-                        }`}
-                      >
-                        {msg.content}
-                      </p>
                     </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                <div className="border-t border-blue-100 p-4">
+                  {showPollComposer && (
+                    <div className="mb-3 space-y-2 rounded-xl border border-blue-100 bg-[#F8FBFF] p-3">
+                      <Input
+                        value={pollQuestion}
+                        onChange={(e) => setPollQuestion(e.target.value)}
+                        placeholder="Poll question"
+                        className="h-10 rounded-lg border-blue-100 bg-white"
+                      />
+                      {pollOptions.map((option, idx) => (
+                        <div key={`poll-option-${idx}`} className="flex gap-2">
+                          <Input
+                            value={option}
+                            onChange={(e) => updatePollOption(idx, e.target.value)}
+                            placeholder={`Option ${idx + 1}`}
+                            className="h-9 rounded-lg border-blue-100 bg-white"
+                          />
+                          {pollOptions.length > 2 && (
+                            <Button type="button" variant="ghost" size="sm" onClick={() => removePollOption(idx)}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      <label className="flex items-center gap-2 pt-1 text-xs text-[#475569]">
+                        <input
+                          type="checkbox"
+                          checked={pollAllowMultipleAnswers}
+                          onChange={(e) => setPollAllowMultipleAnswers(e.target.checked)}
+                          className="h-4 w-4 rounded border-blue-200 text-[#2563EB] focus:ring-[#93C5FD]"
+                        />
+                        Allow multiple answers
+                      </label>
+                      <div className="flex items-center justify-between pt-1">
+                        <Button type="button" variant="ghost" size="sm" onClick={addPollOption} disabled={pollOptions.length >= 10}>
+                          <Plus className="mr-1 h-4 w-4" />
+                          Add option
+                        </Button>
+                        <div className="flex gap-2">
+                          <Button type="button" variant="ghost" size="sm" onClick={resetPollComposer}>Cancel</Button>
+                          <Button type="button" size="sm" onClick={handleCreatePoll}>Send Poll</Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2 rounded-2xl border border-blue-100 bg-white/85 p-2 shadow-sm">
+                    <Button
+                      type="button"
+                      onClick={() => setShowPollComposer((prev) => !prev)}
+                      variant="ghost"
+                      className="h-10 rounded-xl"
+                      title="Create poll"
+                    >
+                      <BarChart3 className="h-4 w-4" />
+                    </Button>
+                    <Input
+                      value={messageInput}
+                      onChange={(e) => setMessageInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                      placeholder="Type a message..."
+                      data-testid="chat-input"
+                      className="h-10 flex-1 rounded-xl border-blue-100 bg-white/90 focus-visible:ring-[#93C5FD]"
+                    />
+                    <Button
+                      onClick={handleSendMessage}
+                      data-testid="send-message-button"
+                      className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white"
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
                   </div>
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-              
-              <VoiceChat 
-                socket={socketRef.current}
-                workspaceId={workspaceId}
-                currentUser={currentUser}
-                members={members}
-              />
-              
-              <div className="border-t border-blue-100 p-4 bg-white/60 backdrop-blur-md">
-                <div className="flex gap-2 rounded-2xl border border-blue-100 bg-white/70 p-2">
-                  <Input
-                    value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    placeholder="Type a message..."
-                    data-testid="chat-input"
-                    className="h-10 flex-1 rounded-xl border-blue-100 bg-white/80 focus-visible:ring-[#2563EB]"
+                </div>
+                <div className="xl:hidden">
+                  <VoiceChat 
+                    socket={socketRef.current}
+                    workspaceId={workspaceId}
+                    currentUser={currentUser}
+                    members={members}
                   />
-                  <Button
-                    onClick={handleSendMessage}
-                    data-testid="send-message-button"
-                    className="rounded-xl bg-gradient-to-r from-[#2563EB] to-[#60A5FA] text-white"
-                  >
-                    <Send className="w-4 h-4" />
-                  </Button>
                 </div>
               </div>
+
+              <aside className="hidden w-[330px] shrink-0 flex-col gap-4 xl:flex">
+                <div className="glass-panel rounded-3xl p-4">
+                  <p className="mb-3 text-sm font-semibold text-[#0F172A]">Online Team</p>
+                  <div className="space-y-2">
+                    {members.slice(0, 5).map((member) => (
+                      <div key={member.user_id} className="flex items-center gap-3 rounded-xl border border-blue-100 bg-white/80 px-3 py-2">
+                        <UserAvatar
+                          name={member.name}
+                          imageUrl={member.picture}
+                          className="h-8 w-8"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-[#0F172A]">{member.name}</p>
+                          <p className="truncate text-xs text-[#64748B]">{member.email}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <VoiceChat 
+                  socket={socketRef.current}
+                  workspaceId={workspaceId}
+                  currentUser={currentUser}
+                  members={members}
+                />
+              </aside>
             </div>
 
             {/* Tasks */}
@@ -873,10 +1250,10 @@ const WorkspacePage = () => {
                       key={member.user_id} 
                       className="flex items-center gap-3 p-2 rounded-md bg-[#F8F9FA]"
                     >
-                      <img
-                        src={member.picture || 'https://via.placeholder.com/32'}
-                        alt={member.name}
-                        className="w-8 h-8 rounded-full"
+                      <UserAvatar
+                        name={member.name}
+                        imageUrl={member.picture}
+                        className="w-8 h-8"
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-[#0F172A] truncate">

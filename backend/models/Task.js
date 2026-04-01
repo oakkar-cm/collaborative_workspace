@@ -9,4 +9,7 @@ const taskSchema = new mongoose.Schema({
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
 }, { timestamps: true, collection: "tasks" });
 
+taskSchema.index({ workspace_id: 1, createdAt: -1 });
+taskSchema.index({ workspace_id: 1, status: 1, createdAt: -1 });
+
 module.exports = mongoose.model("Task", taskSchema);

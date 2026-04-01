@@ -1,5 +1,4 @@
 import client from '../client';
-import { setToken, clearToken } from '../authStorage';
 
 export async function getMe() {
   const { data } = await client.get('/me');
@@ -21,8 +20,6 @@ export async function register({ email, firstName, lastName, password }) {
   return data;
 }
 
-export function logout() {
-  clearToken();
+export async function logout() {
+  await client.post('/logout');
 }
-
-export { setToken };
