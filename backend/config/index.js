@@ -23,6 +23,9 @@ module.exports = {
     .split(",")
     .map((server) => server.trim())
     .filter(Boolean),
+  googleClientId: process.env.GOOGLE_CLIENT_ID || "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+  googleRedirectUri: process.env.GOOGLE_REDIRECT_URI || "http://localhost:5000/api/auth/google/callback",
   jwtSecret: jwtSecret || "dev-only-insecure-jwt-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "1h",
   authCookieName: process.env.AUTH_COOKIE_NAME || "synapse_auth",

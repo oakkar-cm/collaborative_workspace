@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const User = require("../models/User");
 const config = require("../config");
 
@@ -64,7 +65,6 @@ async function loginUser({ email, password }) {
 const activeSessions = new Map();
 
 function createSession(userId) {
-  const crypto = require("crypto");
   const sessionId = crypto.randomBytes(32).toString("hex");
   activeSessions.set(sessionId, { userId, createdAt: Date.now() });
 
@@ -107,9 +107,133 @@ async function exchangeSession(sessionId) {
   };
 }
 
+function isGoogleAuthConfigured() {
+  return Boolean(config.googleClientId && config.googleClientSecret && config.googleRedirectUri);
+}
+
+function buildGoogleAuthUrl() {
+  if (!isGoogleAuthConfigured()) {
+    const err = new Error("Google authentication is not configured");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const params = new URLSearchParams({
+    client_id: config.googleClientId,
+    redirect_uri: config.googleRedirectUri,
+    response_type: "code",
+    scope: "openid email profile",
+    access_type: "offline",
+    prompt: "select_account"
+  });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+async function loginWithGoogleCode(code) {
+  if (!code) {
+    const err = new Error("Missing Google authorization code");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (!isGoogleAuthConfigured()) {
+    const err = new Error("Google authentication is not configured");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: config.googleClientId,
+      client_secret: config.googleClientSecret,
+      redirect_uri: config.googleRedirectUri,
+      grant_type: "authorization_code"
+    })
+  });
+
+  if (!tokenResponse.ok) {
+    const errorBody = await tokenResponse.text();
+    const err = new Error(`Failed to exchange Google auth code: ${errorBody}`);
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const tokenData = await tokenResponse.json();
+  const accessToken = tokenData.access_token;
+  if (!accessToken) {
+    const err = new Error("Google token response did not include access_token");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const profileResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!profileResponse.ok) {
+    const errorBody = await profileResponse.text();
+    const err = new Error(`Failed to fetch Google user profile: ${errorBody}`);
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const profile = await profileResponse.json();
+  const email = String(profile.email || "").trim().toLowerCase();
+  if (!email) {
+    const err = new Error("Google account did not provide an email");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const derivedName = String(profile.name || "").trim().split(/\s+/).filter(Boolean);
+  const firstName = String(profile.given_name || derivedName[0] || "Google").trim();
+  const lastName = String(profile.family_name || derivedName.slice(1).join(" ") || "User").trim();
+
+  let user = await User.findOne({ email });
+  if (!user) {
+    const generatedPassword = crypto.randomBytes(32).toString("hex");
+    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+    user = new User({
+      email,
+      firstName,
+      lastName,
+      password: hashedPassword,
+      avatar_url: profile.picture || ""
+    });
+    await user.save();
+  } else {
+    let didUpdate = false;
+    if (!user.firstName && firstName) {
+      user.firstName = firstName;
+      didUpdate = true;
+    }
+    if (!user.lastName && lastName) {
+      user.lastName = lastName;
+      didUpdate = true;
+    }
+    if ((!user.avatar_url || user.avatar_url.length === 0) && profile.picture) {
+      user.avatar_url = profile.picture;
+      didUpdate = true;
+    }
+    if (didUpdate) {
+      await user.save();
+    }
+  }
+
+  return createSession(user._id);
+}
+
 module.exports = {
   registerUser,
   loginUser,
   createSession,
-  exchangeSession
+  exchangeSession,
+  isGoogleAuthConfigured,
+  buildGoogleAuthUrl,
+  loginWithGoogleCode
 };

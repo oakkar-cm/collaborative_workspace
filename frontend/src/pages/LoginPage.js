@@ -127,14 +127,6 @@ const LoginPage = () => {
               >
                 {loading ? 'Signing in...' : 'Sign in'}
               </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 w-full rounded-xl border-blue-100 bg-white/80 text-[#334155] transition-all hover:bg-blue-50"
-              >
-                Continue with Google
-              </Button>
             </form>
 
             <p className="mt-6 text-center text-sm text-[#64748B]">

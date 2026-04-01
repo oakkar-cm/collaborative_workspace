@@ -85,6 +85,39 @@ async function exchangeSession(req, res, next) {
   }
 }
 
+async function getGoogleConfig(req, res, next) {
+  try {
+    res.json({ enabled: authService.isGoogleAuthConfigured() });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function startGoogleAuth(req, res, next) {
+  try {
+    const url = authService.buildGoogleAuthUrl();
+    res.redirect(url);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function handleGoogleCallback(req, res, next) {
+  try {
+    if (req.query.error) {
+      const message = encodeURIComponent(`Google sign-in failed: ${req.query.error}`);
+      return res.redirect(`${config.clientUrl}/login?error=${message}`);
+    }
+
+    const code = req.query.code;
+    const sessionId = await authService.loginWithGoogleCode(code);
+    const callbackUrl = `${config.clientUrl}/auth/callback#session_id=${encodeURIComponent(sessionId)}`;
+    return res.redirect(callbackUrl);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function logout(req, res, next) {
   try {
     clearAuthCookie(res);
@@ -99,5 +132,8 @@ module.exports = {
   login,
   getMe,
   exchangeSession,
-  logout
+  logout,
+  getGoogleConfig,
+  startGoogleAuth,
+  handleGoogleCallback
 };

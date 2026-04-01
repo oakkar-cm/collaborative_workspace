@@ -44,6 +44,7 @@ const authLimiter = rateLimit({
 app.use("/api/login", authLimiter);
 app.use("/api/register", authLimiter);
 app.use("/api/auth/session", authLimiter);
+app.use("/api/auth/google", authLimiter);
 
 const allowedOrigins = new Set(config.corsOrigins);
 app.use(
