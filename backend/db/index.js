@@ -1,10 +1,16 @@
 const mongoose = require("mongoose");
+const dns = require("dns");
 const config = require("../config");
 const logger = require("../utils/logger");
 
 async function connect() {
   try {
     let uri = config.mongodbUri;
+    if (uri.startsWith("mongodb+srv://") && config.mongodbDnsServers.length > 0) {
+      dns.setServers(config.mongodbDnsServers);
+      logger.info(`Using custom DNS servers for MongoDB SRV: ${config.mongodbDnsServers.join(", ")}`);
+    }
+
     if (uri.includes("mongodb+srv://") || uri.includes("mongodb://")) {
       const hasDb = /\.net\/[^?/]+/.test(uri) || /:\d+\/[^?/]+/.test(uri);
       if (!hasDb) {

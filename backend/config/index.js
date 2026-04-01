@@ -19,6 +19,10 @@ module.exports = {
   isProduction,
   port: parseInt(process.env.PORT, 10) || 5000,
   mongodbUri: process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/collab_workspace",
+  mongodbDnsServers: (process.env.MONGODB_DNS_SERVERS || "8.8.8.8,1.1.1.1")
+    .split(",")
+    .map((server) => server.trim())
+    .filter(Boolean),
   jwtSecret: jwtSecret || "dev-only-insecure-jwt-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "1h",
   authCookieName: process.env.AUTH_COOKIE_NAME || "synapse_auth",
