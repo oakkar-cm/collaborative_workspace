@@ -1,6 +1,7 @@
 services:
   - type: web
     name: collaborative-workspace-api
+    plan: free
     runtime: node
     rootDir: backend
     buildCommand: npm install
